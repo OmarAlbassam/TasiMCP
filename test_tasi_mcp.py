@@ -68,6 +68,7 @@ def fake(monkeypatch, reply):
     monkeypatch.setattr(tasi_mcp, "check", lambda symbol: None)
     monkeypatch.setattr(tasi_mcp, "companies", lambda: [{"symbol": "1120"}])
     monkeypatch.setattr(tasi_mcp, "page", lambda url: ("", ""))
+    monkeypatch.setattr(tasi_mcp, "fetch", lambda url: reply)
     monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, **kw: SimpleNamespace(text=reply, json=lambda: json.loads(reply)))
 
 
@@ -131,3 +132,67 @@ def test_price_history_drops_page_overlap(monkeypatch):
         return SimpleNamespace(json=lambda: {"data": [{"transactionDateStr": d} for d in days[s:s + 100]]})
     monkeypatch.setattr(tasi_mcp, "xhr", site)
     assert [r["transactionDateStr"] for r in tasi_mcp.get_price_history("1120", limit=500)] == days
+
+
+def test_screen_valuations_tags_sectors(monkeypatch):
+    fake(monkeypatch, """<p>Main Market 2026/10/26</p><table><thead><th>Symbol</th><th>Company</th><th>Close</th>
+    <th>Shares</th><th>NI</th><th>Equity</th><th>Cap</th><th>%</th><th>EPS</th><th>P/E</th><th>BV</th><th>P/B</th></thead>
+    <tr><td>2030</td><td>SARCO</td><td>46.26</td><td>15</td><td>-41</td><td>278</td><td>693</td><td>0.01</td><td>-2.7</td>
+    <td>M</td><td>18.5</td><td>2.49</td></tr>
+    <tr><td colspan="2">Energy</td><td></td><td>15</td><td>-41</td><td>278</td><td>693</td><td>0.01</td><td>-2.7</td>
+    <td>M</td><td>18.5</td><td>2.49</td></tr>
+    <tr><td>1010</td><td>RIBL</td><td>19.3</td><td>4000</td><td>10590</td><td>67498</td><td>77200</td><td>0.86</td>
+    <td>2.6</td><td>7.2</td><td>16.8</td><td>1.14</td></tr>
+    <tr><td colspan="2">Banks</td><td></td><td>4000</td><td>10590</td><td>67498</td><td>77200</td><td>0.86</td><td>2.6</td>
+    <td>7.2</td><td>16.8</td><td>1.14</td></tr>
+    <tr><td>Market</td><td></td><td></td><td>4015</td><td>10549</td><td>67776</td><td>77893</td><td></td><td>2.6</td>
+    <td>7.4</td><td>16.8</td><td>1.15</td></tr></table>""")
+    banks = tasi_mcp.screen_valuations("bank")
+    assert banks["as_of"] == "2026-10-26"
+    assert [(s["Symbol"], s["P/E"], s["sector"]) for s in banks["stocks"]] == [("1010", "7.2", "Banks")]
+    assert banks["sectors"] == [{"sector": "Banks", "Shares": "4000", "NI": "10590", "Equity": "67498", "Cap": "77200",
+                                 "%": "0.86", "EPS": "2.6", "P/E": "7.2", "BV": "16.8", "P/B": "1.14"}]
+    assert tasi_mcp.screen_valuations()["sectors"][-1]["P/E"] == "7.4"
+    with pytest.raises(ValueError):
+        tasi_mcp.screen_valuations("Mining")
+
+
+def test_short_interest_filters_symbol(monkeypatch):
+    fake(monkeypatch, """Last Update Date : 2026-10-26<table><tr><th>Symbol</th><th>Company</th><th>% lent</th></tr>
+    <tr><td>1010</td><td>Riyad Bank</td><td>0.01</td></tr><tr><td>1020</td><td>Bank Aljazira</td><td>0.26</td></tr></table>""")
+    assert tasi_mcp.get_short_interest("1020")["lending"] == {
+        "as_of": "2026-10-26", "rows": [{"Symbol": "1020", "Company": "Bank Aljazira", "% lent": "0.26"}]}
+
+
+def test_risk_flags(monkeypatch):
+    fake(monkeypatch, "{}")
+    data = {"getAccumulatedLossesDetails": [{"symbol": "6090", "company": "Jazan", "companyStatus": 3}],
+            "getSuspendedDelistedComp": [{"symbol": "8190", "fromDate": "2026-09-13"}],
+            "getMainMarketMinimumSizeRequirements": [
+                {"col1": {"symbolCode": "6090", "tierValue": 1}, "col2": {"symbolCode": "", "tierValue": 0}, "col3": None}]}
+    monkeypatch.setattr(tasi_mcp, "issuers", lambda name, **kw: data[name])
+    assert tasi_mcp.get_risk_flags("6090") == {
+        "accumulated_losses": [{"symbol": "6090", "company": "Jazan", "losses_of_capital": "50%+"}],
+        "suspensions": [], "liquidity_tier": {"6090": 1}}
+
+
+def test_announcement_splits_tables_from_text(monkeypatch):
+    fake(monkeypatch, """<div class="article_body"><table><tr><td>Sales</td><td>450.77</td></tr></table>
+    <p>All figures are in (Billions)</p><a href="/Resources/fsPdf/1_en.pdf">report</a></div>""")
+    assert tasi_mcp.get_announcement(97212) == {
+        "tables": [[["Sales", "450.77"]]], "text": "All figures are in (Billions)\nreport",
+        "attachments": ["https://www.saudiexchange.sa/Resources/fsPdf/1_en.pdf"]}
+    fake(monkeypatch, "<div></div>")
+    with pytest.raises(ValueError):
+        tasi_mcp.get_announcement(1)
+
+
+def test_list_companies_by_sector(monkeypatch):
+    fake(monkeypatch, "{}")
+    monkeypatch.setattr(tasi_mcp, "companies", lambda: [{"symbol": "1120"}, {"symbol": "8010"}, {"symbol": "X1"}])
+    monkeypatch.setattr(tasi_mcp, "market_watch", lambda: {"1120": {"sectorName": "Banks"},
+                                                         "8010": {"sectorName": "Insurance"}})
+    assert tasi_mcp.list_companies(sector="bank") == [{"symbol": "1120", "sector": "Banks"}]
+    assert len(tasi_mcp.list_companies()) == 3
+    with pytest.raises(ValueError):
+        tasi_mcp.list_companies(sector="Mining")

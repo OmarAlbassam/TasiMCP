@@ -12,7 +12,7 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 
 | Tool | What it returns |
 |---|---|
-| `list_companies` | Search ~1,950 securities by symbol, name or ISIN |
+| `list_companies` | Search ~1,950 securities by symbol, name or ISIN; filter Main market stocks by sector |
 | `get_quotes` | Latest price, change, volume and turnover for ~400 stocks; Main market rows add open/high/low, bid/ask and 52-week range |
 | `get_market` | TASI and other index levels, top gainers and losers |
 | `get_profile` | Overview, capital, board, dividends, last 3 years and 4 quarters of financials |
@@ -21,7 +21,8 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 | `get_filings` | Links to PDF and XBRL filings |
 | `get_xbrl` | Every line item from an XBRL filing, such as loans and finance costs |
 | `get_price_history` | Daily price, volume and trade data, back to 2009 |
-| `get_announcements` | Company announcements |
+| `get_announcements` | Company announcements, filterable by type (e.g. financial results) |
+| `get_announcement` | Full text of one announcement: results tables vs last year and last quarter, and the reasons |
 | `get_corporate_actions` | Bonus shares and other capital changes |
 | `get_foreign_ownership` | Foreign ownership limit, actual and strategic % |
 | `get_major_shareholders` | Daily history of 5%+ holders, incl. lock-up holders |
@@ -30,6 +31,10 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 | `get_dividends` | Dividend calendar for one company or the whole Main market |
 | `get_performance` | Every Main market stock's change over 6 days to 5 years |
 | `get_ipos` | IPOs, ETF/sukuk listings and rights issues in a date range |
+| `screen_valuations` | Daily P/E, P/B, EPS and market cap for every Main market stock, each sector and the market |
+| `get_short_interest` | Daily net short positions (% of shares and free float, days to cover) and shares lent |
+| `get_risk_flags` | Accumulated losses of 20%+ of capital, suspensions in the last year, liquidity tier 1–4 |
+| `get_block_trades` | Negotiated deals (block trades): price, volume, value, date and time |
 
 ## Notes
 
