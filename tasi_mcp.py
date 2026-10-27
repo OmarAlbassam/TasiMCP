@@ -211,11 +211,16 @@ def filings(soup):
     return out
 
 
-def statements_html(symbol, statement_type):
+def profile_xhr(symbol, path, /, **params):
+    """Call a company-profile portlet endpoint; its path is relative to the profile page's <base href>."""
     url = PROFILE.format(symbol)
     _, base = page(url)
-    return xhr(base + STATEMENTS, url, params={"statementType": statement_type, "reportType": 0,
-                                              "requestLocale": "en", "symbol": symbol}).text
+    return xhr(base + path, url, params=params)
+
+
+def statements_html(symbol, statement_type):
+    return profile_xhr(symbol, STATEMENTS, statementType=statement_type, reportType=0, requestLocale="en",
+                       symbol=symbol).text
 
 
 def report(name):
@@ -300,13 +305,17 @@ def profile_soup(symbol):
 @mcp.tool()
 def get_profile(symbol: str) -> dict:
     """Company profile. info: overview, history, capital, issued shares, auditor, board and executives.
-    tables: recent dividends; last 3 years and last 4 quarters of balance sheet, income and cash flow
-    (incl. EPS); older 2019-2022 balance sheets; insider holdings; subsidiaries; peer comparison.
-    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS."""
+    subsidiaries: name, % owned, business and location, if the company lists any. Statements are in get_statements,
+    dividends in get_dividends, options in get_options, P/E and market cap in get_valuation, and board and
+    executive holdings in get_major_shareholders."""
     check(symbol)
     soup = profile_soup(symbol)
+    subs = soup.select(".fundInfo table")
+    subsidiaries = [dict(zip(t[0], r)) for t in map(rows, subs) for r in t[1:]]
+    for t in subs:
+        t.decompose()  # keep them out of info's text
     return {"info": [clean(e.get_text(" | ", strip=True)) for e in soup.select(".fundInfo, .company_management")],
-            "tables": tables(soup)}
+            "subsidiaries": subsidiaries}
 
 
 @mcp.tool()
@@ -315,7 +324,8 @@ def get_statements(symbol: str) -> dict:
     the table's 'All Figures in' unit. recent: balance sheet, income and cash flow summary for the last 3
     years and last 4 quarters. balance / income / cash_flow: full line items for 2019-2022 and mid-2022 to
     mid-2023 quarters. ratios: DPS, EPS and current ratio for 2011-2014. Line names differ between recent
-    and older tables. Quarters from late 2023 to early 2025 and items such as loans are in get_xbrl."""
+    and older tables. Quarters from late 2023 to early 2025 and items such as loans are in get_xbrl.
+    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS."""
     check(symbol)
     # the site keeps recent years on the profile page and older ones behind a separate tab
     recent = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and ["Cash Flows"] in
@@ -333,22 +343,42 @@ def get_filings(symbol: str, kind: Literal["pdf", "xbrl"] = "pdf") -> list[dict]
 
 
 @mcp.tool()
-def get_xbrl(url: str, section: str = "financial position") -> dict:
-    """Read an XBRL filing (an .html link from get_filings kind="xbrl"): every line item, e.g. term loans,
-    lease liabilities, finance costs. section matches a title such as "financial position", "income",
-    "cash flows" or "notes". Returns all section titles and the matching sections' rows."""
+def get_xbrl(symbol: str = "", year: int = 0, period: Literal["Annual", "Q1", "Q2", "Q3"] = "Annual",
+             section: str = "financial position", url: str = "") -> dict:
+    """Full statements from one XBRL filing, 2021 onward: every line item, e.g. term loans, lease liabilities,
+    finance costs. year is the fiscal year; omit it for the latest one filed. There is no Q4 filing: use Annual.
+    section matches a title such as "financial position", "income", "cash flows" or "notes". Returns the filing's
+    year and period, all section titles and the matching sections' rows. url (deprecated) reads an .html link
+    from get_filings instead of symbol, year and period."""
+    filing = {}
+    if not url:  # url is the old interface; drop it next release
+        check(symbol)
+        found = {f["year"]: f for f in get_filings(symbol, "xbrl") if f["period"] == period}
+        if not found or (year and str(year) not in found):
+            raise ValueError(f"No {period} XBRL filing for {symbol} in {year or 'any year'}; years: {sorted(found)}")
+        f = found[str(year) if year else max(found)]
+        filing = {"year": int(f["year"]), "period": period}
+        url = next(u for u in f["urls"] if u.endswith(".html"))
     if not (url.startswith(ROOT + "/Resources/XBRL_DOCS/") and url.endswith(".html")):
         raise ValueError("url must be an XBRL .html link from get_filings")
     sections = xbrl_sections(BeautifulSoup(fetch(url), "html.parser"))
-    return {"sections": list(sections), "matches": {k: v for k, v in sections.items() if section.lower() in k.lower()}}
+    return filing | {"sections": list(sections),
+                     "matches": {k: v for k, v in sections.items() if section.lower() in k.lower()}}
 
 
 @mcp.tool()
 def get_valuation(symbol: str) -> dict:
     """P/E, EPS and market cap on today's issued shares. Use this, not price / the site's EPS, which is not
     restated after bonus share issues. pe is the trailing P/E Tadawul shows on the profile's Peer Comparison tab;
-    pe_fy is price / the last full fiscal year's profit per share."""
+    pe_fy is price / the last full fiscal year's profit per share. daily_report: Tadawul's end-of-day P/E, P/B,
+    EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu."""
     check(symbol)
+    try:
+        daily = screen_valuations()
+    except Exception:  # extras only, like market watch in get_quotes
+        daily = {"as_of": None, "stocks": [], "sectors": []}
+    stock = next((s for s in daily["stocks"] if s["Symbol"] == symbol), None)
+    sector = next((s for s in daily["sectors"] if stock and s["sector"] == stock["sector"]), None)
     soup = profile_soup(symbol)
     shares = int(re.search(r"Total Issued Shares \| ([\d,]+)", soup.select_one(".fundInfo").get_text(" | ", strip=True))
                  .group(1).replace(",", ""))
@@ -364,6 +394,7 @@ def get_valuation(symbol: str) -> dict:
             "fiscal_year_end": fy_end.isoformat(), "fy_net_profit_sar": annual[fy_end],
             "eps_fy": round(annual[fy_end] / shares, 2),
             "pe_fy": round(price * shares / annual[fy_end], 1) if price and annual[fy_end] > 0 else None,
+            "daily_report": {"as_of": daily["as_of"], "stock": stock, "sector": sector} if stock else None,
             "note": "Profit is before Tier 1 sukuk payouts, so bank EPS can read a few % above reported."}
 
 
@@ -392,21 +423,30 @@ def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 
     return [{k: clean(v) if isinstance(v, str) else v for k, v in r.items()} for r in rows[:limit]]
 
 
+ANNOUNCEMENT_TYPES = {"all": "1_-1", "annual_results": "1_17", "interim_results": "1_18",
+                      "bank_annual_results": "1_19", "bank_interim_results": "1_20", "insurer_annual_results": "1_21",
+                      "insurer_interim_results": "1_22", "nomu_results": "1_95", "cash_dividend": "1_57",
+                      "board_changes": "1_23", "assembly_invitation": "1_52", "assembly_results": "1_54",
+                      "contract_award": "1_91", "buyback": "1_103", "accumulated_losses": "1_93"}
+
+
 @mcp.tool()
 def get_announcements(symbol: str = "", page_number: int = 1, page_size: int = 20,
-                      announcement_type: str = "1_-1") -> dict:
+                      announcement_type: Literal[tuple(ANNOUNCEMENT_TYPES)] | str = "all") -> dict:
     """Issuer announcements, newest first. Omit symbol for the whole market.
     Returns totalCount and announcementList (date, Hijri date, title, summary, link, announcementNumber).
-    announcement_type filters by form, default 1_-1 (all): 1_17/1_18 annual/interim results of companies
-    (banks 1_19/1_20, insurers 1_21/1_22, Nomu 1_95), 1_57 cash dividend, 1_23 board or executive changes,
-    1_52/1_54 general assembly invitation/results, 1_91 contract awards, 1_103 share buy-back or sale,
-    1_93 accumulated losses of 20%+. Read one in full with get_announcement."""
+    announcement_type filters by form. annual_results / interim_results are companies' results; banks, insurers
+    and Nomu have their own. board_changes covers board or executive changes, buyback a share buy-back or sale,
+    accumulated_losses losses of 20%+ of capital. The site has more types: a raw code such as 1_57 also works.
+    Read one in full with get_announcement."""
     if symbol:
         check(symbol)
-    if not re.fullmatch(r"1_-?\d+", announcement_type):
-        raise ValueError(f"announcement_type must look like 1_18, not {announcement_type!r}")
+    code = ANNOUNCEMENT_TYPES.get(announcement_type, announcement_type)
+    if not re.fullmatch(r"1_-?\d+", code):
+        raise ValueError(f"announcement_type must be one of {list(ANNOUNCEMENT_TYPES)} or a code like 1_18, "
+                         f"not {announcement_type!r}")
     _, base = page(ANNOUNCE)
-    form = {"annoucmentType": announcement_type, "symbol": symbol, "sectorDpId": "", "searchType": "", "fromDate": "",
+    form = {"annoucmentType": code, "symbol": symbol, "sectorDpId": "", "searchType": "", "fromDate": "",
             "toDate": "", "datePeriod": "", "productType": "", "advisorsList": "", "textSearch": "",
             "pageNumberDb": str(page_number), "pageSize": str(page_size)}
     return xhr(base + ANNOUNCEMENTS, ANNOUNCE, method="POST", data=form).json()
@@ -416,10 +456,7 @@ def get_announcements(symbol: str = "", page_number: int = 1, page_size: int = 2
 def get_corporate_actions(symbol: str):
     """Capital changes such as bonus shares and rights issues, with previous and new capital."""
     check(symbol)
-    url = PROFILE.format(symbol)
-    _, base = page(url)
-    return xhr(base + CORP_ACTIONS, url,
-               params={"indexSymbol": symbol, "language": "en", "issueType": "Corporate Action"}).json()
+    return profile_xhr(symbol, CORP_ACTIONS, indexSymbol=symbol, language="en", issueType="Corporate Action").json()
 
 
 @mcp.tool()
@@ -427,9 +464,7 @@ def get_foreign_ownership(symbol: str) -> dict:
     """Foreign ownership: maximum allowed %, actual % (excluding strategic investors), strategic investors' %,
     and the as-of date."""
     check(symbol)
-    url = PROFILE.format(symbol)
-    _, base = page(url)
-    soup = BeautifulSoup(xhr(base + FOREIGN, url, params={"symbol": symbol}).text, "html.parser")
+    soup = BeautifulSoup(profile_xhr(symbol, FOREIGN, symbol=symbol).text, "html.parser")
     max_pct, actual, strategic = (float(s.get_text(strip=True)) for s in soup.select(".foreign_ownership strong"))
     return {"max_limit_pct": max_pct, "actual_pct": actual, "strategic_pct": strategic,
             "as_of": soup.select_one(".last_update").get_text(strip=True).split(":")[-1].strip()}
@@ -438,16 +473,18 @@ def get_foreign_ownership(symbol: str) -> dict:
 @mcp.tool()
 def get_major_shareholders(symbol: str, start: str = "", end: str = "") -> dict:
     """Holders of 5% or more, one row per holder per trading day: date, holder (often Arabic), % held that day,
-    % the previous day, change. locked: holders under an IPO lock-up. Dates are YYYY-MM-DD, default the last 90 days."""
+    % the previous day, change. locked: holders under an IPO lock-up. Dates are YYYY-MM-DD, default the last 90 days.
+    insiders: board members' and executives' holdings with their role, latest trading day only (ignores the dates)."""
     check(symbol)
-    url = PROFILE.format(symbol)
-    _, base = page(url)
-    params = {"symbol": symbol, "fromDate": day(start, date.today() - timedelta(90)).strftime("%Y/%m/%d"),
-              "toDate": day(end, date.today()).strftime("%Y/%m/%d"), "history": "1"}
-    soup = BeautifulSoup(xhr(base + HOLDERS, url, params=params).text, "html.parser")
+    soup = BeautifulSoup(profile_xhr(symbol, HOLDERS, symbol=symbol, history="1",
+                                     fromDate=day(start, date.today() - timedelta(90)).strftime("%Y/%m/%d"),
+                                     toDate=day(end, date.today()).strftime("%Y/%m/%d")).text, "html.parser")
     keys = ("date", "holder", "pct", "prev_pct", "change")
-    return {k: [dict(zip(keys, r)) for r in rows(soup.select_one(t))[1:] if len(r) == 5]  # skips "No data" row
-            for k, t in (("holders", "#majorShareHoldersTable"), ("locked", "#majorShareHoldersTableLock"))}
+    found = {k: [dict(zip(keys, r)) for r in rows(soup.select_one(t))[1:] if len(r) == 5]  # skips "No data" row
+             for k, t in (("holders", "#majorShareHoldersTable"), ("locked", "#majorShareHoldersTableLock"))}
+    # board and executive holdings are only on the profile page, not behind this endpoint
+    board = [r for t in profile_soup(symbol).select("#boardOfDirector table") for r in rows(t)[1:] if len(r) == 6]
+    return found | {"insiders": [dict(zip(("date", "holder", "role") + keys[2:], r)) for r in board]}
 
 
 @mcp.tool()
@@ -456,14 +493,11 @@ def get_options(symbol: str, settlement_date: str = "") -> dict:
     change, best bid/offer, daily settlement price, volume and open interest. settlement_date is YYYY-MM-DD;
     omit it for every expiry. Empty if the stock has no listed options."""
     check(symbol)
-    url = PROFILE.format(symbol)
-    _, base = page(url)
     dates = [o["value"] for o in profile_soup(symbol).select("#actionSelectSettlementDate option[value]")]
     if settlement_date and settlement_date not in dates:
         raise ValueError(f"settlement_date must be one of {dates}")
-    params = {"symbol": symbol, "language": "en"}
     return {d: [{k: clean(v) for k, v in r.items()}  # every value is an HTML <td> fragment
-                for r in xhr(base + OPTIONS, url, params={**params, "settlement_date": d}).json()]
+                for r in profile_xhr(symbol, OPTIONS, symbol=symbol, language="en", settlement_date=d).json()]
             for d in ([settlement_date] if settlement_date else dates)}
 
 
@@ -493,7 +527,7 @@ def get_chart_series(symbol: str = "TASI", intraday: bool = False, start: str = 
 def get_dividends(symbol: str = "", start: str = "", end: str = "") -> list[dict]:
     """Main market cash dividends: company, announced, eligibility (dueDate) and distribution dates, amount per share
     in SAR. Omit symbol for the whole market. Dates are YYYY-MM-DD, default a year back to a year ahead.
-    Rows seem to start around 2023."""
+    History goes back to at least 2010."""
     if symbol:
         check(symbol)
     _, base = page(DIVIDEND_CALENDAR)

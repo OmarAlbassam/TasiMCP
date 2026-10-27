@@ -87,9 +87,70 @@ def test_major_shareholders(monkeypatch):
     <td>سليمان محمد سليمان السليم</td><td class="priceUp">14.817%</td><td>14.817%</td><td>0</td></tr></tbody></table>
     <table id="majorShareHoldersTableLock">{head}<tbody><tr class="no-records-found showTr">
     <td colspan="5">No data available in table</td></tr></tbody></table>""")
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        '<div id="boardOfDirector"><table><tr><th>Trading Date</th></tr><tr><td>2026-10-26</td><td>عبدالله</td>'
+        '<td>Chairman</td><td>2.18%</td><td>2.18%</td><td>0</td></tr></table></div>', "html.parser"))
     assert tasi_mcp.get_major_shareholders("4002") == {"locked": [], "holders": [
         {"date": "2026-10-22", "holder": "سليمان محمد سليمان السليم", "pct": "14.817%", "prev_pct": "14.817%",
+         "change": "0"}], "insiders": [
+        {"date": "2026-10-26", "holder": "عبدالله", "role": "Chairman", "pct": "2.18%", "prev_pct": "2.18%",
          "change": "0"}]}
+
+
+def test_profile_keeps_info_and_subsidiaries(monkeypatch):
+    fake(monkeypatch, "")
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        '<div class="fundInfo">Capital<table><tr><th>Name Of Subsidiary</th><th>%</th></tr>'
+        '<tr><td>Jeddah Doctors Co.</td><td>51.00%</td></tr></table></div><table id="companyDividends"></table>',
+        "html.parser"))
+    assert tasi_mcp.get_profile("4002") == {
+        "info": ["Capital"], "subsidiaries": [{"Name Of Subsidiary": "Jeddah Doctors Co.", "%": "51.00%"}]}
+
+
+def test_xbrl_finds_filing_by_year_and_period(monkeypatch):
+    fake(monkeypatch, "<table><tr><td>[300200] Statement of financial position</td></tr></table>"
+                      "<table><tr><td>Term loans</td><td>5</td></tr></table>")
+    link = tasi_mcp.ROOT + "/Resources/XBRL_DOCS/x.html"
+    monkeypatch.setattr(tasi_mcp, "get_filings", lambda s, kind: [
+        {"period": p, "year": y, "urls": [link, link[:-4] + "xls"]} for p, y in
+        (("Annual", "2024"), ("Annual", "2025"), ("Q1", "2026"))])
+    latest = tasi_mcp.get_xbrl("1120")
+    assert (latest["year"], latest["period"]) == (2025, "Annual")
+    assert latest["matches"] == {"[300200] Statement of financial position": [["Term loans", "5"]]}
+    assert tasi_mcp.get_xbrl("1120", 2024)["year"] == 2024
+    assert "year" not in tasi_mcp.get_xbrl(url=link)
+    for bad in ({"year": 2023}, {"period": "Q3"}):
+        with pytest.raises(ValueError):
+            tasi_mcp.get_xbrl("1120", **bad)
+
+
+def test_valuation_adds_daily_report_rows(monkeypatch):
+    fake(monkeypatch, "")
+    summary = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in SUMMARY)
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        f'<div class="fundInfo"><b>Total Issued Shares</b><b>4,000</b></div>'
+        f'<div id="unifiedSummaryFinancial"><table>{summary}</table></div>', "html.parser"))
+    monkeypatch.setattr(tasi_mcp, "get_quotes", lambda s: [{"lastTradePrice": 10.0}])
+    monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: {
+        "as_of": "2026-10-26", "stocks": [{"Symbol": "1120", "sector": "Banks"}],
+        "sectors": [{"sector": "Energy"}, {"sector": "Banks", "P/E": "7.2"}]})
+    assert tasi_mcp.get_valuation("1120")["daily_report"] == {
+        "as_of": "2026-10-26", "stock": {"Symbol": "1120", "sector": "Banks"}, "sector": {"sector": "Banks", "P/E": "7.2"}}
+    assert tasi_mcp.get_valuation("9564")["daily_report"] is None  # Nomu is not in the report
+    monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: 1 / 0)
+    assert tasi_mcp.get_valuation("1120")["daily_report"] is None
+
+
+def test_announcements_accept_names_and_codes(monkeypatch):
+    fake(monkeypatch, "{}")
+    sent = []
+    monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, data, **kw: sent.append(data["annoucmentType"]) or
+                        SimpleNamespace(json=dict))
+    tasi_mcp.get_announcements(announcement_type="cash_dividend")
+    tasi_mcp.get_announcements(announcement_type="1_200")
+    assert sent == ["1_57", "1_200"]
+    with pytest.raises(ValueError):
+        tasi_mcp.get_announcements(announcement_type="dividends")
 
 
 def test_options_strips_html_and_checks_date(monkeypatch):
