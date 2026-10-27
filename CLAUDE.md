@@ -8,7 +8,7 @@ Local stdio MCP server for the Saudi Exchange (Tadawul). It scrapes saudiexchang
 
 - Run the server: `uv run tasi-mcp` (entry point `tasi_mcp:main`).
 - All tests: `uv run pytest`. One test: `uv run pytest test_tasi_mcp.py::test_options_strips_html_and_checks_date`.
-- Register with Claude Code: `claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp`. Tools added in a running session only load after `/mcp` reconnect or a restart.
+- Register with Claude Code: `claude mcp add tasi -s user -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp`. Tools added in a running session only load after `/mcp` reconnect or a restart.
 - Quick live check of one tool without MCP: `uv run python -c "import tasi_mcp; print(tasi_mcp.get_quotes(['1120']))"`.
 
 ## Architecture

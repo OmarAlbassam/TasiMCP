@@ -5,7 +5,7 @@ Local MCP server for the Saudi Exchange (Tadawul). It runs over stdio and pulls 
 ## Add to Claude Code
 
 ```
-claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
+claude mcp add tasi -s user -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 ```
 
 ## Tools
