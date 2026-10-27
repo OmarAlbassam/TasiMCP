@@ -196,3 +196,15 @@ def test_list_companies_by_sector(monkeypatch):
     assert len(tasi_mcp.list_companies()) == 3
     with pytest.raises(ValueError):
         tasi_mcp.list_companies(sector="Mining")
+
+
+def test_statements_joins_recent_summary_and_older_tabs(monkeypatch):
+    fake(monkeypatch, "")
+    summary = "<tr><th>Balance Sheet</th><th>2025-12-31</th></tr><tr><td>Cash Flows</td><td></td></tr>"
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        f"<table></table><table>{summary}</table><table><tr><th>Balance Sheet</th><th>2022-12-31</th></tr></table>",
+        "html.parser"))
+    monkeypatch.setattr(tasi_mcp, "statements_html", lambda s, t: f"<table><tr><td>type {t}</td></tr></table>")
+    assert tasi_mcp.get_statements("1120") == {
+        "recent": [[["Balance Sheet", "2025-12-31"], ["Cash Flows", ""]]], "balance": [[["type 0"]]],
+        "income": [[["type 1"]]], "cash_flow": [[["type 2"]]], "ratios": [[["type 3"]]]}

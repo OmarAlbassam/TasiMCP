@@ -17,7 +17,7 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 | `get_market` | TASI and other index levels, top gainers and losers |
 | `get_profile` | Overview, capital, board, dividends, last 3 years and 4 quarters of financials |
 | `get_valuation` | Tadawul's P/E, EPS and market cap on today's share count |
-| `get_statements` | Older balance sheet, income and cash flow statements (2019–2022), and 2011–2014 ratios |
+| `get_statements` | All balance sheet, income and cash flow data: 2019–2025 annual, recent and older quarters, and 2011–2014 ratios |
 | `get_filings` | Links to PDF and XBRL filings |
 | `get_xbrl` | Every line item from an XBRL filing, such as loans and finance costs |
 | `get_price_history` | Daily price, volume and trade data, back to 2009 |
