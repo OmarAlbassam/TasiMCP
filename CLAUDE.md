@@ -32,4 +32,4 @@ Many replies are JSON sent as `text/html`, so parse the body yourself. `ENDPOINT
 
 ## Tests
 
-`test_tasi_mcp.py` is offline. Pure parsers get HTML/JSON fixtures directly. Tools use `fake(monkeypatch, reply)`, which stubs `xhr`, `page`, `check`, `companies` and the cache so every request returns `reply`.
+`test_tasi_mcp.py` is offline. Pure parsers get HTML/JSON fixtures directly. Tools use `fake(monkeypatch, reply)`, which stubs `xhr`, `page`, `fetch`, `check`, `companies` and the cache so every request returns `reply`.

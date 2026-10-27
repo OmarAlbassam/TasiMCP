@@ -23,7 +23,11 @@ WATCH = PORTAL + "/ourmarkets/main-market-watch?locale=en"
 PERFORMANCE = PORTAL + "/ourmarkets/main-market-watch/main-market-performance?locale=en"
 DIVIDEND_CALENDAR = PORTAL + "/newsandreports/issuer-financial-calendars/dividends?locale=en"
 IPOS = PORTAL + "/listing/ipos?locale=en"
+ISSUERS = PORTAL + "/ourmarkets/main-market-watch/issuers-trading-information?locale=en"
+ANNOUNCEMENT = PORTAL + ("/newsandreports/issuer-news/issuer-announcements/issuer-announcements-details/"
+                         "?anId={}&anCat=1&locale=en")
 CHART = ROOT + "/tadawul.eportal.charts.v2/ChartGenerator"
+REPORT = ROOT + "/Resources/Reports-v2/{}_en.html"
 STATEMENTS = "p0/IZ7_5A602H80O0VC4060O4GML81G57=CZ6_5A602H80OGF2E0QF9BQDEG10K4=NJstatementsTabData=/"
 CORP_ACTIONS = "p0/IZ7_5A602H80O0VC4060O4GML81GV7=CZ6_5A602H80OGF2E0QF9BQDEG10K4=NJgetCorporateAction=/"
 PRICES = "p0/IZ7_5A602H80O0HTC060SG6UT81216=CZ6_5A602H80O0HTC060SG6UT812E4=NJpopulateCompanyDetails=/"
@@ -36,6 +40,7 @@ GAINERS = "p0/IZ7_5A602H80OOMQC0604RU6VD1021=CZ6_5A602H80OGSTA0QFSTBN9F10G0=NJge
 LOSERS = "p0/IZ7_5A602H80OOMQC0604RU6VD1021=CZ6_5A602H80OGSTA0QFSTBN9F10G0=NJgetMainMarketPerformanceLosersDetails=/"
 DIVIDENDS = "p0/IZ7_5A602H80OOMQC0604RU6VD10J3=CZ6_5A602H80O8HH70QFKI8IRJ00P3=NJgetDividendsDetails=/"
 LISTINGS = "p0/IZ7_5A602H80OOMQC0604RU6VD10F0=CZ6_5A602H80OO5JC0QFMU3NNK3852=NJgetALLListingDataId=/"
+ISSUERS_DATA = "p0/IZ7_5A602H80OOMQC0604RU6VD10D2=CZ6_5A602H80O8DDC0QFK8HJ0O20K4=NJ{}=/"
 
 # Akamai blocks non-browser TLS fingerprints, and the JSON endpoints 403 without XHR-style headers.
 S = requests.Session(impersonate="chrome")
@@ -213,6 +218,30 @@ def statements_html(symbol, statement_type):
                                               "requestLocale": "en", "symbol": symbol}).text
 
 
+def report(name):
+    """As-of date, header and rows of a daily market report under /Resources/Reports-v2."""
+    soup = BeautifulSoup(fetch(REPORT.format(name)), "html.parser")
+    head = [clean(th.get_text(" ")) for th in soup.find_all("th")]
+    as_of = re.search(r"\d{4}[-/]\d\d[-/]\d\d", soup.get_text()).group().replace("/", "-")
+    return as_of, head, [r for r in rows(soup.find("table")) if r != head]
+
+
+def issuers(name, **params):
+    """Rows from an issuers-trading-information endpoint, minus the long companyURL."""
+    _, base = page(ISSUERS)
+    return [{k: v for k, v in r.items() if k != "companyURL"}
+            for r in xhr(base + ISSUERS_DATA.format(name), ISSUERS, params={**params, "requestLocale": "en"})
+            .json()["data"]]
+
+
+def pick_sector(sector, names):
+    """The sector names containing `sector`, ignoring case. Raises with the valid names if none do."""
+    found = {n for n in names if sector.lower() in n.lower()}
+    if not found:
+        raise ValueError(f"Unknown sector {sector!r}; use one of {sorted(set(names))}")
+    return found
+
+
 mcp = MCPServer("tasi", instructions=(
     "Saudi Exchange (Tadawul) data scraped live from saudiexchange.sa. Symbols are 4-digit codes, e.g. 2222 "
     "(Saudi Aramco), 4002 (Mouwasat). Financial table figures are SAR thousands unless the table says otherwise. "
@@ -221,10 +250,16 @@ mcp = MCPServer("tasi", instructions=(
 
 
 @mcp.tool()
-def list_companies(query: str = "", limit: int = 50) -> list[dict]:
-    """Find listed securities (stocks, funds, sukuk) by symbol, English or Arabic name, or ISIN."""
+def list_companies(query: str = "", limit: int = 50, sector: str = "") -> list[dict]:
+    """Find listed securities (stocks, funds, sukuk) by symbol, English or Arabic name, or ISIN.
+    sector keeps Main market stocks whose sector contains it, e.g. "Banks" or "Insurance", and adds each one's sector."""
     q = query.lower()
-    return [c for c in companies() if q in " ".join(map(str, c.values())).lower()][:limit]
+    found = [c for c in companies() if q in " ".join(map(str, c.values())).lower()]
+    if sector:
+        of = {s: w["sectorName"] for s, w in market_watch().items()}
+        keep = pick_sector(sector, of.values())
+        found = [c | {"sector": of[c["symbol"]]} for c in found if of.get(c["symbol"]) in keep]
+    return found[:limit]
 
 
 @cached(60)
@@ -353,13 +388,20 @@ def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 
 
 
 @mcp.tool()
-def get_announcements(symbol: str = "", page_number: int = 1, page_size: int = 20) -> dict:
+def get_announcements(symbol: str = "", page_number: int = 1, page_size: int = 20,
+                      announcement_type: str = "1_-1") -> dict:
     """Issuer announcements, newest first. Omit symbol for the whole market.
-    Returns totalCount and announcementList (date, Hijri date, title, summary, link)."""
+    Returns totalCount and announcementList (date, Hijri date, title, summary, link, announcementNumber).
+    announcement_type filters by form, default 1_-1 (all): 1_17/1_18 annual/interim results of companies
+    (banks 1_19/1_20, insurers 1_21/1_22, Nomu 1_95), 1_57 cash dividend, 1_23 board or executive changes,
+    1_52/1_54 general assembly invitation/results, 1_91 contract awards, 1_103 share buy-back or sale,
+    1_93 accumulated losses of 20%+. Read one in full with get_announcement."""
     if symbol:
         check(symbol)
+    if not re.fullmatch(r"1_-?\d+", announcement_type):
+        raise ValueError(f"announcement_type must look like 1_18, not {announcement_type!r}")
     _, base = page(ANNOUNCE)
-    form = {"annoucmentType": "1_-1", "symbol": symbol, "sectorDpId": "", "searchType": "", "fromDate": "",
+    form = {"annoucmentType": announcement_type, "symbol": symbol, "sectorDpId": "", "searchType": "", "fromDate": "",
             "toDate": "", "datePeriod": "", "productType": "", "advisorsList": "", "textSearch": "",
             "pageNumberDb": str(page_number), "pageSize": str(page_size)}
     return xhr(base + ANNOUNCEMENTS, ANNOUNCE, method="POST", data=form).json()
@@ -483,6 +525,91 @@ def get_ipos(start: str = "", end: str = "") -> dict:
             "toDate": day(end, date.today()).strftime("%d/%m/%Y")}
     return {k: [{f: clean(v) if isinstance(v, str) else v for f, v in r.items() if f not in noise} for r in rs]
             for k, rs in xhr(base + LISTINGS, IPOS, method="POST", data=form).json().items()}
+
+
+@mcp.tool()
+def get_announcement(announcement_id: int) -> dict:
+    """Full text of one announcement (announcementNumber from get_announcements). For financial results: tables of
+    this quarter vs the same quarter last year vs the previous quarter and year to date, a units line such as
+    "All figures are in (Billions)", then management's reasons for each change. attachments links the filed report."""
+    body = BeautifulSoup(fetch(ANNOUNCEMENT.format(announcement_id)), "html.parser").select_one(".article_body")
+    if not body:
+        raise ValueError(f"No announcement {announcement_id}; use announcementNumber from get_announcements")
+    found = tables(body)
+    attachments = [urljoin(ROOT, a["href"]) for a in body.find_all("a", href=True)]
+    for table in body.find_all("table"):
+        table.decompose()
+    return {"tables": found, "text": body.get_text("\n", strip=True), "attachments": attachments}
+
+
+@mcp.tool()
+def screen_valuations(sector: str = "") -> dict:
+    """Tadawul's daily P/E, P/B, EPS, book value per share, market cap, net income and equity for every Main market
+    stock, with the same figures for each sector and the whole market ("Market"), to screen and compare stocks with
+    their sector. sector keeps sectors whose name contains it, e.g. "Banks". Money in SAR millions, shares in
+    millions. P/E "M" means loss-making. as_of is the trading day."""
+    as_of, head, found = report("DailyFinancialIndicators")
+    stocks, sectors, group = [], [], []
+    for r in found:
+        if r[0].isdigit():
+            group.append(dict(zip(head, r)))
+        else:  # a subtotal after its sector's stocks, or the market total; their last 9 cells line up with head[3:]
+            stocks += [s | {"sector": r[0]} for s in group]
+            sectors.append({"sector": r[0], **dict(zip(head[3:], r[-9:]))})
+            group = []
+    if sector:
+        keep = pick_sector(sector, [s["sector"] for s in sectors])
+        stocks, sectors = ([s for s in rs if s["sector"] in keep] for rs in (stocks, sectors))
+    return {"as_of": as_of, "stocks": stocks, "sectors": sectors}
+
+
+@mcp.tool()
+def get_short_interest(symbol: str = "") -> dict:
+    """Short selling from Tadawul's daily Main market reports. net_short: net short position as % of outstanding
+    shares and of free float, and the ratio to 60-day average daily volume (days to cover); only stocks with a
+    position are listed. lending: shares lent out under securities borrowing and lending, and % of issued shares.
+    Omit symbol for every stock."""
+    if symbol:
+        check(symbol)
+    out = {}
+    for key, name in (("net_short", "NetShortPositions"), ("lending", "SBLReport")):
+        as_of, head, found = report(name)
+        out[key] = {"as_of": as_of, "rows": [dict(zip(head, r)) for r in found if not symbol or r[0] == symbol]}
+    return out
+
+
+@mcp.tool()
+def get_risk_flags(symbol: str = "") -> dict:
+    """Main market red flags and liquidity. accumulated_losses: companies whose losses reached 20-35%, 35-50% or 50%+
+    of capital, which brings CMA disclosure rules and, at 50%, a vote on dissolving. suspensions: trading
+    suspensions in the last year with the news link. liquidity_tier: {symbol: 1-4} by 6-month average daily traded
+    value (1 >= SAR 50M, 2 = 5-50M, 3 = 1-5M, 4 < 1M), which also sets the minimum block-trade size. Omit symbol
+    for every company."""
+    if symbol:
+        check(symbol)
+    bands = {1: "20-35%", 2: "35-50%", 3: "50%+"}
+    losses = [{"symbol": r["symbol"], "company": r["company"], "losses_of_capital": bands[r["companyStatus"]]}
+              for r in issuers("getAccumulatedLossesDetails", percentage="All")]
+    suspensions = issuers("getSuspendedDelistedComp", renderType="onload", formType="Suspension",
+                          fromDate=(date.today() - timedelta(365)).strftime("%d-%m-%Y"),
+                          toDate=date.today().strftime("%d-%m-%Y"))
+    tiers = {c["symbolCode"]: c["tierValue"] for r in issuers("getMainMarketMinimumSizeRequirements")
+             for c in (r.get(f"col{i}") for i in range(1, 5)) if c and c["tierValue"]}  # tierValue 0 = empty cell
+    mine = lambda rs: [r for r in rs if not symbol or r["symbol"] == symbol]
+    return {"accumulated_losses": mine(losses), "suspensions": mine(suspensions),
+            "liquidity_tier": {s: t for s, t in tiers.items() if not symbol or s == symbol}}
+
+
+@mcp.tool()
+def get_block_trades(symbol: str = "", start: str = "", end: str = "") -> list[dict]:
+    """Main market negotiated deals (block trades agreed off the order book): date, time, price, volume and value.
+    Omit symbol for the whole market. Dates are YYYY-MM-DD, default the last 30 days."""
+    if symbol:
+        check(symbol)
+    found = issuers("getNegotiatedDetails", sector="All", company=symbol or "All",
+                    fromDate=day(start, date.today() - timedelta(30)).strftime("%d-%m-%Y"),
+                    toDate=day(end, date.today()).strftime("%d-%m-%Y"))
+    return [r for r in found if r["symbol"]]  # the last row is a blank-symbol total
 
 
 def main():
