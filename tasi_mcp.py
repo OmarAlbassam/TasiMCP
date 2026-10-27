@@ -310,13 +310,18 @@ def get_profile(symbol: str) -> dict:
 
 
 @mcp.tool()
-def get_statements(symbol: str, statement: Literal["balance", "income", "cash_flow", "ratios"] = "income") -> list:
-    """Older statements: balance sheet, income or cash flow for 2019-2022 annual and mid-2022 to mid-2023
-    quarters (SAR thousands); ratios gives DPS, EPS and current ratio for 2011-2014.
-    Recent years are in get_profile; full line items such as loans are in get_xbrl."""
+def get_statements(symbol: str) -> dict:
+    """Every financial statement the site has; each table's columns are newest first and its figures are in
+    the table's 'All Figures in' unit. recent: balance sheet, income and cash flow summary for the last 3
+    years and last 4 quarters. balance / income / cash_flow: full line items for 2019-2022 and mid-2022 to
+    mid-2023 quarters. ratios: DPS, EPS and current ratio for 2011-2014. Line names differ between recent
+    and older tables. Quarters from late 2023 to early 2025 and items such as loans are in get_xbrl."""
     check(symbol)
-    stype = {"balance": 0, "income": 1, "cash_flow": 2, "ratios": 3}[statement]
-    return tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
+    # the site keeps recent years on the profile page and older ones behind a separate tab
+    recent = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and ["Cash Flows"] in
+              [r[:1] for r in t]]
+    return {"recent": recent} | {name: tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
+                                 for name, stype in (("balance", 0), ("income", 1), ("cash_flow", 2), ("ratios", 3))}
 
 
 @mcp.tool()
