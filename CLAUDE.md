@@ -17,7 +17,7 @@ Everything is in `tasi_mcp.py` (MCP Python SDK v2, `MCPServer` + `@mcp.tool()`).
 
 - `request()`: one shared `curl_cffi` session with `impersonate="chrome"`, behind a lock. Akamai blocks other TLS fingerprints.
 - `xhr(url, referer)`: adds the `XHR` headers and a `Referer`. JSON endpoints return 403 without both.
-- `page(url)`: fetches a portal page and its `<base href>`. The `p0/IZ7_...=NJname=/` portlet constants are relative to that base, so call `base + CONST` with the page URL as referer.
+- `page(url)`: fetches a portal page and its `<base href>`. The `p0/IZ7_...=NJname=/` portlet constants are relative to that base, so call `base + CONST` with the page URL as referer. `profile_xhr(symbol, CONST, **params)` does this for the company-profile portlets.
 - `servlet(name)`: site-wide `/tadawul.eportal.theme.helper/*` JSON (ticker, company list, market summary).
 - `@cached(ttl)`: in-memory cache keyed by function name and args. Tests reset `_cache`.
 - Tools: thin functions that call the layers above, validate input (`check(symbol)`, `day()` for ISO dates) and parse HTML with BeautifulSoup / `clean()` / `tables()`.
