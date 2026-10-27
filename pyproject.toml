@@ -1,0 +1,16 @@
+[project]
+name = "tasi-mcp"
+version = "0.1.0"
+description = "MCP server for the Saudi Exchange (Tadawul), scraped live from saudiexchange.sa"
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.3", "curl_cffi", "beautifulsoup4"]
+
+[project.scripts]
+tasi-mcp = "tasi_mcp:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
