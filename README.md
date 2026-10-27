@@ -41,6 +41,4 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 - The site uses Akamai bot protection. `curl_cffi` copies Chrome's TLS fingerprint to get past it. If the site changes its setup, expect 403 errors.
 - Don't calculate P/E as price ÷ the site's EPS. Tadawul doesn't update EPS after bonus share issues, so Al Rajhi shows 5.85 when the true figure is 4.13. `get_valuation` divides net profit by today's share count instead.
 - `get_valuation`'s `pe` is read from the profile's Peer Comparison tab. An older self-calculated 12-month P/E from XBRL (`ttm_profit`, `xbrl_profits`) is kept in the code, marked `@deprecated`.
-- `get_profile` no longer returns the page's raw `tables`. Statements, dividends, options and board holdings come from `get_statements`, `get_dividends`, `get_options` and `get_major_shareholders`.
-- `get_xbrl(url=...)` still works but is deprecated. Pass `symbol`, `year` and `period` instead.
 - Run the tests with `uv run pytest`.
