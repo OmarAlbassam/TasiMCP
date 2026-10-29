@@ -332,19 +332,28 @@ def get_profile(symbol: str) -> dict:
 
 
 @mcp.tool()
-def get_statements(symbol: str) -> dict:
+def get_statements(symbol: str, sections: list[str] | None = None) -> dict:
     """Every financial statement the site has; each table's columns are newest first and its figures are in
     the table's 'All Figures in' unit. recent: balance sheet, income and cash flow summary for the last 3
     years and last 4 quarters. balance / income / cash_flow: full line items for 2019-2022 and mid-2022 to
     mid-2023 quarters. ratios: DPS, EPS and current ratio for 2011-2014. Line names differ between recent
     and older tables. Quarters from late 2023 to early 2025 and items such as loans are in get_xbrl.
-    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS."""
+    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS.
+    sections: names from the list above to return, e.g. ["recent"] skips the older tables and their requests;
+    omit for all. Figures are as the site shows them today and can be restated, so the results announcement
+    is the primary source."""
+    older = {"balance": 0, "income": 1, "cash_flow": 2, "ratios": 3}
+    unknown = set(sections or []) - {"recent", *older}
+    if unknown:
+        raise ValueError(f"Unknown sections {sorted(unknown)}; valid: recent, {', '.join(older)}")
     check(symbol)
-    # the site keeps recent years on the profile page and older ones behind a separate tab
-    recent = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and ["Cash Flows"] in
-              [r[:1] for r in t]]
-    return {"recent": recent} | {name: tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
-                                 for name, stype in (("balance", 0), ("income", 1), ("cash_flow", 2), ("ratios", 3))}
+    want = lambda name: sections is None or name in sections
+    out = {}
+    if want("recent"):  # the site keeps recent years on the profile page and older ones behind a separate tab
+        out["recent"] = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and
+                         ["Cash Flows"] in [r[:1] for r in t]]
+    return out | {name: tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
+                  for name, stype in older.items() if want(name)}
 
 
 @mcp.tool()

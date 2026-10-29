@@ -297,3 +297,6 @@ def test_statements_joins_recent_summary_and_older_tabs(monkeypatch):
     assert tasi_mcp.get_statements("1120") == {
         "recent": [[["Balance Sheet", "2025-12-31"], ["Cash Flows", ""]]], "balance": [[["type 0"]]],
         "income": [[["type 1"]]], "cash_flow": [[["type 2"]]], "ratios": [[["type 3"]]]}
+    assert list(tasi_mcp.get_statements("1120", sections=["income", "recent"])) == ["recent", "income"]
+    with pytest.raises(ValueError, match="balance"):
+        tasi_mcp.get_statements("1120", sections=["recnt"])
