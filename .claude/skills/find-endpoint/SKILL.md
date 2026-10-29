@@ -38,6 +38,6 @@ POST: `t.xhr(base + PATH, PAGE_URL, method="POST", data={...})`. Use `t.servlet(
 
 ## 4. Record it
 
-- Add a row to `ENDPOINTS.md`: **Not used** (under its page) until a tool calls it, then move it to **Used**. Give path, method + params, what it returns, response size, and the date it was verified live. Dead ends go under **Failed / not useful**.
+- Add a row to `ENDPOINTS.md`: **Not used** (under its page) until a tool calls it, then move it to **Used**. Give path, method + params, what it returns, response size, and what a correct reply looks like (no verified dates; they go stale). Dead ends go under **Failed / not useful**.
 - If you're adding a tool, follow the existing layers in `tasi_mcp.py` (`page`/`xhr`/`servlet`, `@cached`, `check()`/`day()` for input) and add an offline test in `test_tasi_mcp.py` using `fake(monkeypatch, reply)` with a trimmed real response as the fixture.
 - `uv run pytest`.
