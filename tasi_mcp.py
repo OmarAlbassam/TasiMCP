@@ -282,13 +282,26 @@ def market_watch():
 def get_quotes(symbols: list[str] | None = None) -> list[dict]:
     """Latest price, change, volume, turnover and trade count for Main market and Nomu stocks.
     Main market rows also have open, high, low, previous close, best bid/ask with sizes, 52-week high/low
-    and sector; for Nomu these stay empty. Omit symbols for all ~400."""
+    and sector; for Nomu these stay empty. Omit symbols for all ~400. Every row gets market_open: false
+    when the site says the market is closed. A stock with no trade yet today has a price of 0 on the site:
+    those rows get lastTradePrice = previousClosePrice and price_is_previous_close: true."""
     try:
         watch = market_watch()
     except Exception:  # extras only; a market-watch outage must not take down quotes and get_valuation
         watch = {}
-    return [r | watch.get(r["pk_rf_company"], {}) for r in servlet("TickerServlet")["stockData"]
+    rows = [r | watch.get(r["pk_rf_company"], {}) for r in servlet("TickerServlet")["stockData"]
             if not symbols or r["pk_rf_company"] in symbols]
+    try:
+        # shortcut: only the known closed codes (0, 3, 4); open-session codes unconfirmed, map them when seen
+        closed = servlet("RefreshTradeDetailsServlet")["marketStatusCode"] in (0, 3, 4)
+    except Exception:  # extras only, like market watch
+        closed = False
+    for r in rows:
+        if closed:
+            r["market_open"] = False
+        if not r.get("lastTradePrice", 1) and r.get("previousClosePrice"):  # 0 means no trade yet today
+            r["lastTradePrice"], r["price_is_previous_close"] = r["previousClosePrice"], True
+    return rows
 
 
 @mcp.tool()

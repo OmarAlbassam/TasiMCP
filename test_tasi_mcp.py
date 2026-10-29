@@ -184,6 +184,22 @@ def test_quotes_merge_market_watch(monkeypatch):
     assert rajhi["todaysOpen"] == 59.3 and rajhi["bidPrice"] == 1
 
 
+def test_quotes_zero_price_falls_back_to_previous_close(monkeypatch):
+    fake(monkeypatch, json.dumps({"data": [{"companyRef": 2222, "todayOpen": 0, **dict.fromkeys(
+        ("sectorName", "highPrice", "lowPrice", "bidPrice", "bidQuantity", "askPrice", "askQuantity",
+         "high52WeekPrice", "low52WeekPrice"), 0), "previousClosePrice": 27.5}]}))
+    ticker = {"stockData": [{"pk_rf_company": "2222", "lastTradePrice": 0},
+                            {"pk_rf_company": "1120", "lastTradePrice": 59.75}]}
+    monkeypatch.setattr(tasi_mcp, "servlet", lambda name: ticker | {"marketStatusCode": 3})
+    row, traded = tasi_mcp.get_quotes(["2222", "1120"])
+    assert row["lastTradePrice"] == 27.5 and row["price_is_previous_close"] and row["market_open"] is False
+    assert traded["lastTradePrice"] == 59.75 and "price_is_previous_close" not in traded
+    assert traded["market_open"] is False
+    monkeypatch.setattr(tasi_mcp, "servlet", lambda name: ticker if name == "TickerServlet" else 1 / 0)
+    row, = tasi_mcp.get_quotes(["2222"])  # status lookup fails: still a quote
+    assert row["lastTradePrice"] == 27.5 and "market_open" not in row
+
+
 def test_price_history_drops_page_overlap(monkeypatch):
     fake(monkeypatch, "{}")
     days = [f"d{i:03}" for i in range(250)]
