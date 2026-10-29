@@ -300,3 +300,14 @@ def test_statements_joins_recent_summary_and_older_tabs(monkeypatch):
     assert list(tasi_mcp.get_statements("1120", sections=["income", "recent"])) == ["recent", "income"]
     with pytest.raises(ValueError, match="balance"):
         tasi_mcp.get_statements("1120", sections=["recnt"])
+
+
+def test_market_sections(monkeypatch):
+    reply = {"tasiValue": "9,921.50", "marketBean": {"noOfUps": 53, "noOfDowns": 212},
+             "mainMarketActiveResultsBean": [1], "etfMarketBean": {"x": 1}, "marketWatchETFsBeans": [2]}
+    fake(monkeypatch, json.dumps(reply))
+    assert tasi_mcp.get_market(["indices", "breadth"]) == {"breadth": reply["marketBean"], "tasiValue": "9,921.50"}
+    assert tasi_mcp.get_market(["etfs"]) == {"etfMarketBean": {"x": 1}, "marketWatchETFsBeans": [2]}
+    assert tasi_mcp.get_market() == {"breadth": reply["marketBean"]} | {k: v for k, v in reply.items() if k != "marketBean"}
+    with pytest.raises(ValueError, match="valid: indices"):
+        tasi_mcp.get_market(["etf"])

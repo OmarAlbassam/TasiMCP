@@ -14,7 +14,7 @@ claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp
 |---|---|
 | `list_companies` | Search ~1,950 securities by symbol, name or ISIN; filter Main market stocks by sector |
 | `get_quotes` | Latest price, change, volume and turnover for ~400 stocks; Main market rows add open/high/low, bid/ask and 52-week range |
-| `get_market` | TASI and other index levels, top gainers and losers |
+| `get_market` | TASI and other index levels, market breadth, top gainers and losers (takes `sections`) |
 | `get_profile` | Overview, capital, board, executives and subsidiaries |
 | `get_valuation` | Tadawul's P/E, EPS and market cap on today's share count, plus the daily report's P/E, P/B and book value for the stock and its sector |
 | `get_statements` | All balance sheet, income and cash flow data: 2019–2025 annual, recent and older quarters, and 2011–2014 ratios |

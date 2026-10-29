@@ -304,11 +304,36 @@ def get_quotes(symbols: list[str] | None = None) -> list[dict]:
     return rows
 
 
+MARKET_SECTIONS = {  # sections of RefreshTradeDetailsServlet, by its top-level keys; "indices" is everything else
+    "main_movers": ["mainMarketActiveResultsBean"],
+    "nomu_movers": ["nomuMarketActiveResultBean"],
+    "sukuk": ["sokukMarketActiveResultBean", "sukukMarketBean"],
+    "reits": ["reitMarketActiveResultBean", "reitMarketBean"],
+    "etfs": ["etfMarketActiveResultBean", "etfMarketBean", "marketWatchETFsBeans"],
+    "cefs": ["marketWatchCEFBeans", "cefMarketBean"],
+}
+
+
 @mcp.tool()
-def get_market() -> dict:
-    """Market summary: TASI, MT30, Nomu, sukuk, REIT and ETF indices, 52-week and YTD figures,
-    top gainers and losers, and listed company counts."""
-    return servlet("RefreshTradeDetailsServlet")
+def get_market(sections: list[str] | None = None) -> dict:
+    """Market summary, about 40k chars in full. breadth: Main market advancers (noOfUps), decliners (noOfDowns),
+    unchanged, trades, volume and turnover, under the top-level `breadth` key.
+    sections picks the rest, default all:
+    indices (TASI, MT30, Nomu and sukuk index levels, 52-week and YTD figures, market status, listed counts),
+    breadth, main_movers, nomu_movers, sukuk, reits, etfs, cefs (the last five are top gainers, losers, volume
+    and value, and their rows). E.g. ["indices", "breadth", "main_movers"] is about a fifth of the size."""
+    valid = ["indices", "breadth", *MARKET_SECTIONS]
+    unknown = set(sections or []) - set(valid)
+    if unknown:
+        raise ValueError(f"Unknown sections {sorted(unknown)}; valid: {', '.join(valid)}")
+    data = servlet("RefreshTradeDetailsServlet")
+    owned = {k for keys in MARKET_SECTIONS.values() for k in keys} | {"marketBean"}
+    want = lambda name: sections is None or name in sections
+    out = {"breadth": data["marketBean"]} if want("breadth") else {}
+    for name, keys in {"indices": [k for k in data if k not in owned], **MARKET_SECTIONS}.items():
+        if want(name):
+            out |= {k: data[k] for k in keys if k in data}
+    return out
 
 
 def profile_soup(symbol):
