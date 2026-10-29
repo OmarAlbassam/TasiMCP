@@ -418,7 +418,11 @@ def get_valuation(symbol: str) -> dict:
     """P/E, EPS and market cap on today's issued shares. Use this, not price / the site's EPS, which is not
     restated after bonus share issues. pe is the trailing P/E Tadawul shows on the profile's Peer Comparison tab;
     pe_fy is price / the last full fiscal year's profit per share. daily_report: Tadawul's end-of-day P/E, P/B,
-    EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu."""
+    EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu.
+    dividends_ttm_sar: cash dividends per share whose eligibility date (dueDate, what get_dividends returns) fell in
+    the last 365 days, specials included. dividend_yield_pct: that / price. payout_ratio_pct: that / eps_fy;
+    payout_above_100 flags it, which usually means a one-off special. All three are None if the dividend lookup fails (payout also if eps_fy <= 0).
+    Warning: after a bonus issue or split in the window, old dividends are per old share and the yield is overstated."""
     check(symbol)
     try:
         daily = screen_valuations()
@@ -433,14 +437,24 @@ def get_valuation(symbol: str) -> dict:
     fy_end = max(annual)
     quote = get_quotes([symbol])
     price = quote[0]["lastTradePrice"] if quote else None
+    today = date.today()
+    try:  # shortcut: no bonus issue/split adjustment (get_corporate_actions), upgrade if yields after bonus issues matter
+        divs = round(sum(d["amount"] for d in get_dividends(symbol, (today - timedelta(365)).isoformat(), today.isoformat())
+                         if d["dueDate"] <= today.isoformat()), 4)
+    except Exception:  # extras only, like the daily report
+        divs = None
     site = next((td.select_one(".price") for td in soup.select("#peercompDT td") if "P/E" in td.get_text()), None)
     site = site.get_text(strip=True).replace(",", "") if site else ""
+    payout = round(divs * shares / annual[fy_end] * 100, 1) if divs is not None and annual[fy_end] > 0 else None
 
     return {"price": price, "issued_shares": shares, "market_cap_sar": price * shares if price else None,
             "pe": float(site) if site not in ("", "-") else None,  # "-" for loss-making companies
             "fiscal_year_end": fy_end.isoformat(), "fy_net_profit_sar": annual[fy_end],
             "eps_fy": round(annual[fy_end] / shares, 2),
             "pe_fy": round(price * shares / annual[fy_end], 1) if price and annual[fy_end] > 0 else None,
+            "dividends_ttm_sar": divs,
+            "dividend_yield_pct": round(divs / price * 100, 2) if divs is not None and price else None,
+            "payout_ratio_pct": payout, "payout_above_100": payout is not None and payout > 100,
             "daily_report": {"as_of": daily["as_of"], "stock": stock, "sector": sector} if stock else None,
             "note": "Profit is before Tier 1 sukuk payouts, so bank EPS can read a few % above reported."}
 

@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -139,6 +139,26 @@ def test_valuation_adds_daily_report_rows(monkeypatch):
     assert tasi_mcp.get_valuation("9564")["daily_report"] is None  # Nomu is not in the report
     monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: 1 / 0)
     assert tasi_mcp.get_valuation("1120")["daily_report"] is None
+
+
+def test_valuation_sums_dividends_up_to_today(monkeypatch):
+    fake(monkeypatch, "")
+    summary = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in SUMMARY)
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        f'<div class="fundInfo"><b>Total Issued Shares</b><b>4,000</b></div>'
+        f'<div id="unifiedSummaryFinancial"><table>{summary}</table></div>', "html.parser"))
+    monkeypatch.setattr(tasi_mcp, "get_quotes", lambda s: [{"lastTradePrice": 10.0}])
+    monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: {"as_of": None, "stocks": [], "sectors": []})
+    today = date.today()
+    rows = [{"dueDate": (today - timedelta(d)).isoformat(), "amount": a} for d, a in ((10, 0.5), (200, 0.25), (0, 0.25), (-5, 9.0), (50, 0))]
+    monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: rows)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"]) == (1.0, 10.0)  # the future row is left out
+    assert v["payout_ratio_pct"] == round(4000 / v["fy_net_profit_sar"] * 100, 1)
+    assert v["payout_above_100"] == (v["payout_ratio_pct"] > 100)
+    monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: 1 / 0)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"]) == (None, None, None)
 
 
 def test_announcements_accept_names_and_codes(monkeypatch):
