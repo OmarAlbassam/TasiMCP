@@ -235,8 +235,10 @@ def test_price_history_index(monkeypatch):
     fake(monkeypatch, "{}")
     sent = []
     monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, data, **kw: sent.append(data) or SimpleNamespace(
-        json=lambda: {"data": [{"transactionDateStr": "2026/10/29", "volumeTraded": "254,305,649"}]}))
-    assert tasi_mcp.get_price_history("TASI")[0]["volumeTraded"] == "254,305,649"
+        json=lambda: {"data": [{"transactionDateStr": "2026/10/29", "volumeTraded": "254,305,649",
+                                                  "previousClosePrice": "9,921.50"}]}))
+    row = tasi_mcp.get_price_history("TASI")[0]
+    assert row["volumeTraded"] == "254,305,649" and row["close"] == "9,921.50" and "previousClosePrice" not in row
     assert sent[0]["selectedMarket"] == "INDICES" and sent[0]["selectedEntity"] == "M:TASI"
     monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, **kw: SimpleNamespace(json=lambda: {"data": []}))
     with pytest.raises(ValueError):
