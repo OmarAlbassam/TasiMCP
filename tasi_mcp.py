@@ -401,13 +401,18 @@ def get_valuation(symbol: str) -> dict:
 @mcp.tool()
 def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 250) -> list[dict]:
     """Daily open, high, low, close, volume, turnover and trades, newest first. Dates are YYYY-MM-DD.
-    Returns at most `limit` days; history goes back to 2009 for older listings."""
-    check(symbol)
+    symbol is a stock or a Main market index such as TASI, MT30 or TBNI (indices have no change fields, and
+    MT30 has "-" for volume, turnover and trades). Returns at most `limit` days; history goes back to 2009."""
+    stock = symbol in {c["symbol"] for c in companies()}
+    if not stock and not re.fullmatch(r"[A-Za-z0-9]{2,8}", symbol):
+        raise ValueError(f"Unknown symbol {symbol!r}; use list_companies to find it")
     _, base = page(HISTORY)
     rows = []
-    for market in ("MAIN", "NOMUC"):  # the endpoint returns nothing if the market is wrong
+    # the endpoint returns nothing if the market is wrong; indices need the "M:" prefix
+    for market in ("MAIN", "NOMUC") if stock else ("INDICES",):
+        entity = symbol if stock else "M:" + symbol.upper()
         while len(rows) < limit:
-            form = {"selectedMarket": market, "selectedSector": "", "selectedEntity": symbol,
+            form = {"selectedMarket": market, "selectedSector": "", "selectedEntity": entity,
                     "startDate": date.fromisoformat(start or "2000-01-01").strftime("%d-%m-%Y"),
                     "endDate": (date.fromisoformat(end) if end else date.today()).strftime("%d-%m-%Y"),
                     "tableTabId": "0", "draw": "1", "start": str(len(rows)), "startIndex": str(len(rows)),
@@ -420,6 +425,9 @@ def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 
                 break
         if rows:
             break
+    if not rows and not stock:
+        raise ValueError(f"No price history for {symbol!r} in that range; check the dates, or use a listed stock "
+                         "or a Main market index such as TASI")
     return [{k: clean(v) if isinstance(v, str) else v for k, v in r.items()} for r in rows[:limit]]
 
 

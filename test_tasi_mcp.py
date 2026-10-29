@@ -195,6 +195,18 @@ def test_price_history_drops_page_overlap(monkeypatch):
     assert [r["transactionDateStr"] for r in tasi_mcp.get_price_history("1120", limit=500)] == days
 
 
+def test_price_history_index(monkeypatch):
+    fake(monkeypatch, "{}")
+    sent = []
+    monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, data, **kw: sent.append(data) or SimpleNamespace(
+        json=lambda: {"data": [{"transactionDateStr": "2026/10/29", "volumeTraded": "254,305,649"}]}))
+    assert tasi_mcp.get_price_history("TASI")[0]["volumeTraded"] == "254,305,649"
+    assert sent[0]["selectedMarket"] == "INDICES" and sent[0]["selectedEntity"] == "M:TASI"
+    monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, **kw: SimpleNamespace(json=lambda: {"data": []}))
+    with pytest.raises(ValueError):
+        tasi_mcp.get_price_history("NOPE")
+
+
 def test_screen_valuations_tags_sectors(monkeypatch):
     fake(monkeypatch, """<p>Main Market 2026/10/26</p><table><thead><th>Symbol</th><th>Company</th><th>Close</th>
     <th>Shares</th><th>NI</th><th>Equity</th><th>Cap</th><th>%</th><th>EPS</th><th>P/E</th><th>BV</th><th>P/B</th></thead>
