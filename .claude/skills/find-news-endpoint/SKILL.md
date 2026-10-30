@@ -1,11 +1,11 @@
 ---
 name: find-news-endpoint
-description: Find an argaam.com or mubasher.info news endpoint by watching the live site in Chrome DevTools (chrome-devtools MCP), then replay it with curl_cffi and record it in news_endpoints/argaam.md or news_endpoints/mubasher.md. Use when adding or fixing a news tool, or when asked "where does Argaam or Mubasher get X".
+description: Find an argaam.com or mubasher.info news endpoint by watching the live site in Chrome DevTools (chrome-devtools MCP), then replay it with curl_cffi and record it in docs/news_endpoints/argaam.md or docs/news_endpoints/mubasher.md. Use when adding or fixing a news tool, or when asked "where does Argaam or Mubasher get X".
 ---
 
 # Find a news endpoint on Argaam or Mubasher
 
-Goal: find where the site gets a piece of news or data, call it from Python with the helpers in `tasi_mcp.py`, and record it in that site's file: `news_endpoints/argaam.md` or `news_endpoints/mubasher.md`.
+Goal: find where the site gets a piece of news or data, call it from Python with the helpers in `tasi_mcp.py`, and record it in that site's file: `docs/news_endpoints/argaam.md` or `docs/news_endpoints/mubasher.md`.
 
 Start with that file. If the data is already mapped, go straight to the replay. Its "How to call" section has the rules every request needs.
 
