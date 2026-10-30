@@ -3,7 +3,7 @@ import functools
 import re
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 from urllib.parse import urljoin
 
@@ -16,7 +16,7 @@ PORTAL = ROOT + "/wps/portal/saudiexchange"
 HOME = PORTAL + "/home"
 # The plain ?companySymbol= URL renders an empty template; only this encoded one works.
 PROFILE = (PORTAL + "/hidden/company-profile-main/!ut/p/z1/04_Sj9CPykssy0xPLMnMz0vMAfIjo8ziTR3NDIw8LAz83d2MXA0C3SydAl1c3Q0"
-           "NvE30I4EKzBEKDMKcTQzMDPxN3H19LAzdTU31w8syU8v1wwkpK8hOMgUA-oskdg!!/?companySymbol={}")
+           "NvE30I4EKzBEKDMKcTQzMDPxN3H19LAzdTU31w8syU8v1wwkpK8hOMgUA-oskdg!!/?companySymbol={}&locale=en")
 HISTORY = PORTAL + "/newsandreports/reports-publications/historical-reports?locale=en"
 ANNOUNCE = PORTAL + "/newsandreports/issuer-news/issuer-announcements?locale=en"
 WATCH = PORTAL + "/ourmarkets/main-market-watch?locale=en"
@@ -282,20 +282,61 @@ def market_watch():
 def get_quotes(symbols: list[str] | None = None) -> list[dict]:
     """Latest price, change, volume, turnover and trade count for Main market and Nomu stocks.
     Main market rows also have open, high, low, previous close, best bid/ask with sizes, 52-week high/low
-    and sector; for Nomu these stay empty. Omit symbols for all ~400."""
+    and sector; for Nomu these stay empty. Omit symbols for all ~400. Every row gets market_open: false
+    when the site says the market is closed. A stock with no trade yet today has a price of 0 on the site:
+    those rows get lastTradePrice = previousClosePrice and price_is_previous_close: true, or lastTradePrice: null
+    when the site gives no previous close (Nomu, or market watch down)."""
     try:
         watch = market_watch()
     except Exception:  # extras only; a market-watch outage must not take down quotes and get_valuation
         watch = {}
-    return [r | watch.get(r["pk_rf_company"], {}) for r in servlet("TickerServlet")["stockData"]
+    rows = [r | watch.get(r["pk_rf_company"], {}) for r in servlet("TickerServlet")["stockData"]
             if not symbols or r["pk_rf_company"] in symbols]
+    try:
+        # shortcut: only the known closed codes (0, 3, 4); open-session codes unconfirmed, map them when seen
+        closed = servlet("RefreshTradeDetailsServlet")["marketStatusCode"] in (0, 3, 4)
+    except Exception:  # extras only, like market watch
+        closed = False
+    for r in rows:
+        if closed:
+            r["market_open"] = False
+        if not r.get("lastTradePrice", 1) and r.get("previousClosePrice"):  # 0 means no trade yet today
+            r["lastTradePrice"], r["price_is_previous_close"] = r["previousClosePrice"], True
+        elif not r.get("lastTradePrice", 1):  # a 0 is not a price; null beats a fake one
+            r["lastTradePrice"] = None
+    return rows
+
+
+MARKET_SECTIONS = {  # sections of RefreshTradeDetailsServlet, by its top-level keys; "indices" is everything else
+    "main_movers": ["mainMarketActiveResultsBean"],
+    "nomu_movers": ["nomuMarketActiveResultBean"],
+    "sukuk": ["sokukMarketActiveResultBean", "sukukMarketBean"],
+    "reits": ["reitMarketActiveResultBean", "reitMarketBean"],
+    "etfs": ["etfMarketActiveResultBean", "etfMarketBean", "marketWatchETFsBeans"],
+    "cefs": ["marketWatchCEFBeans", "cefMarketBean"],
+}
 
 
 @mcp.tool()
-def get_market() -> dict:
-    """Market summary: TASI, MT30, Nomu, sukuk, REIT and ETF indices, 52-week and YTD figures,
-    top gainers and losers, and listed company counts."""
-    return servlet("RefreshTradeDetailsServlet")
+def get_market(sections: list[str] | None = None) -> dict:
+    """Market summary, about 40k chars in full. breadth: Main market advancers (noOfUps), decliners (noOfDowns),
+    unchanged, trades, volume and turnover, under the top-level `breadth` key.
+    sections picks the rest, default all:
+    indices (TASI, MT30, Nomu and sukuk index levels, 52-week and YTD figures, market status, listed counts),
+    breadth, main_movers, nomu_movers, sukuk, reits, etfs, cefs (the last five are top gainers, losers, volume
+    and value, and their rows). E.g. ["indices", "breadth", "main_movers"] is about a fifth of the size."""
+    valid = ["indices", "breadth", *MARKET_SECTIONS]
+    unknown = set(sections or []) - set(valid)
+    if unknown:
+        raise ValueError(f"Unknown sections {sorted(unknown)}; valid: {', '.join(valid)}")
+    data = servlet("RefreshTradeDetailsServlet")
+    owned = {k for keys in MARKET_SECTIONS.values() for k in keys} | {"marketBean"}
+    want = lambda name: sections is None or name in sections
+    out = {"breadth": data["marketBean"]} if want("breadth") else {}
+    for name, keys in {"indices": [k for k in data if k not in owned], **MARKET_SECTIONS}.items():
+        if want(name):
+            out |= {k: data[k] for k in keys if k in data}
+    return out
 
 
 def profile_soup(symbol):
@@ -319,19 +360,28 @@ def get_profile(symbol: str) -> dict:
 
 
 @mcp.tool()
-def get_statements(symbol: str) -> dict:
+def get_statements(symbol: str, sections: list[str] | None = None) -> dict:
     """Every financial statement the site has; each table's columns are newest first and its figures are in
     the table's 'All Figures in' unit. recent: balance sheet, income and cash flow summary for the last 3
     years and last 4 quarters. balance / income / cash_flow: full line items for 2019-2022 and mid-2022 to
     mid-2023 quarters. ratios: DPS, EPS and current ratio for 2011-2014. Line names differ between recent
     and older tables. Quarters from late 2023 to early 2025 and items such as loans are in get_xbrl.
-    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS."""
+    EPS is as published: not restated after bonus issues, and some quarters show year-to-date EPS.
+    sections: names from the list above to return, e.g. ["recent"] skips the older tables and their requests;
+    omit for all. Figures are as the site shows them today and can be restated, so the results announcement
+    is the primary source."""
+    older = {"balance": 0, "income": 1, "cash_flow": 2, "ratios": 3}
+    unknown = set(sections or []) - {"recent", *older}
+    if unknown:
+        raise ValueError(f"Unknown sections {sorted(unknown)}; valid: recent, {', '.join(older)}")
     check(symbol)
-    # the site keeps recent years on the profile page and older ones behind a separate tab
-    recent = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and ["Cash Flows"] in
-              [r[:1] for r in t]]
-    return {"recent": recent} | {name: tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
-                                 for name, stype in (("balance", 0), ("income", 1), ("cash_flow", 2), ("ratios", 3))}
+    want = lambda name: sections is None or name in sections
+    out = {}
+    if want("recent"):  # the site keeps recent years on the profile page and older ones behind a separate tab
+        out["recent"] = [t for t in tables(profile_soup(symbol)) if t and t[0][0] == "Balance Sheet" and
+                         ["Cash Flows"] in [r[:1] for r in t]]
+    return out | {name: tables(BeautifulSoup(statements_html(symbol, stype), "html.parser"))
+                  for name, stype in older.items() if want(name)}
 
 
 @mcp.tool()
@@ -371,7 +421,12 @@ def get_valuation(symbol: str) -> dict:
     """P/E, EPS and market cap on today's issued shares. Use this, not price / the site's EPS, which is not
     restated after bonus share issues. pe is the trailing P/E Tadawul shows on the profile's Peer Comparison tab;
     pe_fy is price / the last full fiscal year's profit per share. daily_report: Tadawul's end-of-day P/E, P/B,
-    EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu."""
+    EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu.
+    dividends_ttm_sar: cash dividends per share whose eligibility date (dueDate, what get_dividends returns) fell in
+    the last 365 days, specials included. dividend_yield_pct: that / price. payout_ratio_pct: that / eps_fy;
+    payout_above_100 flags it, which usually means a one-off special. All four are None (payout also if eps_fy <= 0)
+    if the dividend lookup fails, or if a bonus issue, split or capital reduction has a dueDate in the window: older
+    dividends are then per old share and we don't adjust. dividend_note says why; otherwise it is None."""
     check(symbol)
     try:
         daily = screen_valuations()
@@ -386,14 +441,40 @@ def get_valuation(symbol: str) -> dict:
     fy_end = max(annual)
     quote = get_quotes([symbol])
     price = quote[0]["lastTradePrice"] if quote else None
+    today = date.today()
+    start = today - timedelta(365)
+    divs = note = None
+    try:
+        # Bonus issues, splits and capital reductions change what one share is; rights issues, acquisitions, mergers
+        # and debt conversions add shares without changing old ones, so they are ignored.
+        acts = get_corporate_actions(symbol)
+        hit = [(datetime.strptime(a["dueDate"], "%d/%m/%Y").date(), a["issueTypeDesc"])
+               for a in acts["upComingCorporateBeans"] + acts["pastCorporateBeans"]
+               if re.search(r"bonus|split|reduc|consolidat", a["issueTypeDesc"], re.I)]
+        hit = [h for h in hit if start <= h[0] <= today]
+        if hit:
+            when, kind = max(hit)
+            note = (f"{kind} on {when} inside the 12-month window; dividends before it are per old share, so TTM, "
+                    "yield and payout are left out. See get_dividends and get_corporate_actions.")
+        else:
+            divs = round(sum(d["amount"] for d in get_dividends(symbol, start.isoformat(), today.isoformat())
+                             if d["dueDate"] <= today.isoformat()), 4)
+    except Exception:  # extras only, like the daily report; if we can't tell, leave the dividend fields out
+        divs = None
+        note = "Dividend lookup failed, so TTM, yield and payout are left out. Try get_dividends and get_corporate_actions."
     site = next((td.select_one(".price") for td in soup.select("#peercompDT td") if "P/E" in td.get_text()), None)
     site = site.get_text(strip=True).replace(",", "") if site else ""
+    payout = round(divs * shares / annual[fy_end] * 100, 1) if divs is not None and annual[fy_end] > 0 else None
 
     return {"price": price, "issued_shares": shares, "market_cap_sar": price * shares if price else None,
             "pe": float(site) if site not in ("", "-") else None,  # "-" for loss-making companies
             "fiscal_year_end": fy_end.isoformat(), "fy_net_profit_sar": annual[fy_end],
             "eps_fy": round(annual[fy_end] / shares, 2),
             "pe_fy": round(price * shares / annual[fy_end], 1) if price and annual[fy_end] > 0 else None,
+            "dividends_ttm_sar": divs,
+            "dividend_yield_pct": round(divs / price * 100, 2) if divs is not None and price else None,
+            "payout_ratio_pct": payout, "payout_above_100": payout > 100 if payout is not None else None,
+            "dividend_note": note,
             "daily_report": {"as_of": daily["as_of"], "stock": stock, "sector": sector} if stock else None,
             "note": "Profit is before Tier 1 sukuk payouts, so bank EPS can read a few % above reported."}
 
@@ -401,13 +482,19 @@ def get_valuation(symbol: str) -> dict:
 @mcp.tool()
 def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 250) -> list[dict]:
     """Daily open, high, low, close, volume, turnover and trades, newest first. Dates are YYYY-MM-DD.
-    Returns at most `limit` days; history goes back to 2009 for older listings."""
-    check(symbol)
+    symbol is a stock or a Main market index such as TASI, MT30 or TBNI (indices have no change fields, and
+    MT30 has "-" for volume, turnover and trades). `close` is that day's close (the site calls it
+    previousClosePrice, which is misleading). Returns at most `limit` days; history goes back to 2009."""
+    stock = symbol in {c["symbol"] for c in companies()}
+    if not stock and not re.fullmatch(r"[A-Za-z0-9]{2,8}", symbol):
+        raise ValueError(f"Unknown symbol {symbol!r}; use list_companies to find it")
     _, base = page(HISTORY)
     rows = []
-    for market in ("MAIN", "NOMUC"):  # the endpoint returns nothing if the market is wrong
+    # the endpoint returns nothing if the market is wrong; indices need the "M:" prefix
+    for market in ("MAIN", "NOMUC") if stock else ("INDICES",):
+        entity = symbol if stock else "M:" + symbol.upper()
         while len(rows) < limit:
-            form = {"selectedMarket": market, "selectedSector": "", "selectedEntity": symbol,
+            form = {"selectedMarket": market, "selectedSector": "", "selectedEntity": entity,
                     "startDate": date.fromisoformat(start or "2000-01-01").strftime("%d-%m-%Y"),
                     "endDate": (date.fromisoformat(end) if end else date.today()).strftime("%d-%m-%Y"),
                     "tableTabId": "0", "draw": "1", "start": str(len(rows)), "startIndex": str(len(rows)),
@@ -420,7 +507,12 @@ def get_price_history(symbol: str, start: str = "", end: str = "", limit: int = 
                 break
         if rows:
             break
-    return [{k: clean(v) if isinstance(v, str) else v for k, v in r.items()} for r in rows[:limit]]
+    if not rows and not stock:
+        raise ValueError(f"No price history for {symbol!r} in that range; check the dates, or use a listed stock "
+                         "or a Main market index such as TASI")
+    # the site's previousClosePrice is that day's close, so rename it
+    return [{("close" if k == "previousClosePrice" else k): clean(v) if isinstance(v, str) else v
+             for k, v in r.items()} for r in rows[:limit]]
 
 
 ANNOUNCEMENT_TYPES = {"all": "1_-1", "annual_results": "1_17", "interim_results": "1_18",

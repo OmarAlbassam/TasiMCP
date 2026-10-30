@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -124,8 +124,12 @@ def test_xbrl_finds_filing_by_year_and_period(monkeypatch):
             tasi_mcp.get_xbrl("1120", **bad)
 
 
+NO_ACTIONS = {"upComingCorporateBeans": [], "pastCorporateBeans": []}
+
+
 def test_valuation_adds_daily_report_rows(monkeypatch):
     fake(monkeypatch, "")
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
     summary = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in SUMMARY)
     monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
         f'<div class="fundInfo"><b>Total Issued Shares</b><b>4,000</b></div>'
@@ -139,6 +143,43 @@ def test_valuation_adds_daily_report_rows(monkeypatch):
     assert tasi_mcp.get_valuation("9564")["daily_report"] is None  # Nomu is not in the report
     monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: 1 / 0)
     assert tasi_mcp.get_valuation("1120")["daily_report"] is None
+
+
+def test_valuation_sums_dividends_up_to_today(monkeypatch):
+    fake(monkeypatch, "")
+    summary = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in SUMMARY)
+    monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
+        f'<div class="fundInfo"><b>Total Issued Shares</b><b>4,000</b></div>'
+        f'<div id="unifiedSummaryFinancial"><table>{summary}</table></div>', "html.parser"))
+    monkeypatch.setattr(tasi_mcp, "get_quotes", lambda s: [{"lastTradePrice": 10.0}])
+    monkeypatch.setattr(tasi_mcp, "screen_valuations", lambda: {"as_of": None, "stocks": [], "sectors": []})
+    today = date.today()
+    rows = [{"dueDate": (today - timedelta(d)).isoformat(), "amount": a} for d, a in ((10, 0.5), (200, 0.25), (0, 0.25), (-5, 9.0), (50, 0))]
+    monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: rows)
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"]) == (1.0, 10.0)  # the future row is left out
+    assert v["payout_ratio_pct"] == round(4000 / v["fy_net_profit_sar"] * 100, 1)
+    assert v["payout_above_100"] == (v["payout_ratio_pct"] > 100) and v["dividend_note"] is None
+    # a bonus issue inside the window blanks the numbers; one 400 days ago does not; a failed lookup blanks them too
+    def acts(days):
+        due = (today - timedelta(days)).strftime("%d/%m/%Y")
+        return {"upComingCorporateBeans": [], "pastCorporateBeans": [
+            {"issueTypeDesc": "Bonus Shares", "dueDate": due}, {"issueTypeDesc": "Rights Issue", "dueDate": due}]}
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: acts(30))
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"], v["payout_above_100"]) == (None,) * 4
+    assert "Bonus Shares" in v["dividend_note"]
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: acts(400))
+    assert tasi_mcp.get_valuation("1120")["dividends_ttm_sar"] == 1.0
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: 1 / 0)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"], v["payout_above_100"]) == (None,) * 4
+    assert v["dividend_note"]
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
+    monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: 1 / 0)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"]) == (None, None, None)
 
 
 def test_announcements_accept_names_and_codes(monkeypatch):
@@ -184,6 +225,24 @@ def test_quotes_merge_market_watch(monkeypatch):
     assert rajhi["todaysOpen"] == 59.3 and rajhi["bidPrice"] == 1
 
 
+def test_quotes_zero_price_falls_back_to_previous_close(monkeypatch):
+    fake(monkeypatch, json.dumps({"data": [{"companyRef": 2222, "todayOpen": 0, **dict.fromkeys(
+        ("sectorName", "highPrice", "lowPrice", "bidPrice", "bidQuantity", "askPrice", "askQuantity",
+         "high52WeekPrice", "low52WeekPrice"), 0), "previousClosePrice": 27.5}]}))
+    ticker = {"stockData": [{"pk_rf_company": "2222", "lastTradePrice": 0},
+                            {"pk_rf_company": "1120", "lastTradePrice": 59.75},
+                            {"pk_rf_company": "9564", "lastTradePrice": 0}]}
+    monkeypatch.setattr(tasi_mcp, "servlet", lambda name: ticker | {"marketStatusCode": 3})
+    row, traded, nomu = tasi_mcp.get_quotes(["2222", "1120", "9564"])
+    assert row["lastTradePrice"] == 27.5 and row["price_is_previous_close"] and row["market_open"] is False
+    assert traded["lastTradePrice"] == 59.75 and "price_is_previous_close" not in traded
+    assert traded["market_open"] is False
+    assert nomu["lastTradePrice"] is None  # no previous close to fall back on
+    monkeypatch.setattr(tasi_mcp, "servlet", lambda name: ticker if name == "TickerServlet" else 1 / 0)
+    row, = tasi_mcp.get_quotes(["2222"])  # status lookup fails: still a quote
+    assert row["lastTradePrice"] == 27.5 and "market_open" not in row
+
+
 def test_price_history_drops_page_overlap(monkeypatch):
     fake(monkeypatch, "{}")
     days = [f"d{i:03}" for i in range(250)]
@@ -193,6 +252,20 @@ def test_price_history_drops_page_overlap(monkeypatch):
         return SimpleNamespace(json=lambda: {"data": [{"transactionDateStr": d} for d in days[s:s + 100]]})
     monkeypatch.setattr(tasi_mcp, "xhr", site)
     assert [r["transactionDateStr"] for r in tasi_mcp.get_price_history("1120", limit=500)] == days
+
+
+def test_price_history_index(monkeypatch):
+    fake(monkeypatch, "{}")
+    sent = []
+    monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, data, **kw: sent.append(data) or SimpleNamespace(
+        json=lambda: {"data": [{"transactionDateStr": "2026/10/29", "volumeTraded": "254,305,649",
+                                                  "previousClosePrice": "9,921.50"}]}))
+    row = tasi_mcp.get_price_history("TASI")[0]
+    assert row["volumeTraded"] == "254,305,649" and row["close"] == "9,921.50" and "previousClosePrice" not in row
+    assert sent[0]["selectedMarket"] == "INDICES" and sent[0]["selectedEntity"] == "M:TASI"
+    monkeypatch.setattr(tasi_mcp, "xhr", lambda *a, **kw: SimpleNamespace(json=lambda: {"data": []}))
+    with pytest.raises(ValueError):
+        tasi_mcp.get_price_history("NOPE")
 
 
 def test_screen_valuations_tags_sectors(monkeypatch):
@@ -269,3 +342,17 @@ def test_statements_joins_recent_summary_and_older_tabs(monkeypatch):
     assert tasi_mcp.get_statements("1120") == {
         "recent": [[["Balance Sheet", "2025-12-31"], ["Cash Flows", ""]]], "balance": [[["type 0"]]],
         "income": [[["type 1"]]], "cash_flow": [[["type 2"]]], "ratios": [[["type 3"]]]}
+    assert list(tasi_mcp.get_statements("1120", sections=["income", "recent"])) == ["recent", "income"]
+    with pytest.raises(ValueError, match="balance"):
+        tasi_mcp.get_statements("1120", sections=["recnt"])
+
+
+def test_market_sections(monkeypatch):
+    reply = {"tasiValue": "9,921.50", "marketBean": {"noOfUps": 53, "noOfDowns": 212},
+             "mainMarketActiveResultsBean": [1], "etfMarketBean": {"x": 1}, "marketWatchETFsBeans": [2]}
+    fake(monkeypatch, json.dumps(reply))
+    assert tasi_mcp.get_market(["indices", "breadth"]) == {"breadth": reply["marketBean"], "tasiValue": "9,921.50"}
+    assert tasi_mcp.get_market(["etfs"]) == {"etfMarketBean": {"x": 1}, "marketWatchETFsBeans": [2]}
+    assert tasi_mcp.get_market() == {"breadth": reply["marketBean"]} | {k: v for k, v in reply.items() if k != "marketBean"}
+    with pytest.raises(ValueError, match="valid: indices"):
+        tasi_mcp.get_market(["etf"])
