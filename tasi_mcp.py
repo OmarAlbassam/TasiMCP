@@ -1,9 +1,11 @@
 """Saudi Exchange (Tadawul) MCP server. Scrapes saudiexchange.sa on demand, over stdio."""
 import functools
+import json
 import re
 import threading
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin
 
@@ -41,6 +43,9 @@ LOSERS = "p0/IZ7_5A602H80OOMQC0604RU6VD1021=CZ6_5A602H80OGSTA0QFSTBN9F10G0=NJget
 DIVIDENDS = "p0/IZ7_5A602H80OOMQC0604RU6VD10J3=CZ6_5A602H80O8HH70QFKI8IRJ00P3=NJgetDividendsDetails=/"
 LISTINGS = "p0/IZ7_5A602H80OOMQC0604RU6VD10F0=CZ6_5A602H80OO5JC0QFMU3NNK3852=NJgetALLListingDataId=/"
 ISSUERS_DATA = "p0/IZ7_5A602H80OOMQC0604RU6VD10D2=CZ6_5A602H80O8DDC0QFK8HJ0O20K4=NJ{}=/"
+# Every argaam.com page carries the full company search list; the RSS index is the smallest with no company slug.
+ARGAAM = "https://www.argaam.com/en/rss"
+ARGAAM_IDS = Path(__file__).with_name("argaam_ids.json")  # rewrite with update_argaam_ids.py
 
 # Akamai blocks non-browser TLS fingerprints, and the JSON endpoints 403 without XHR-style headers.
 S = requests.Session(impersonate="chrome")
@@ -245,6 +250,28 @@ def pick_sector(sector, names):
     if not found:
         raise ValueError(f"Unknown sector {sector!r}; use one of {sorted(set(names))}")
     return found
+
+
+def argaam_list(html):
+    """{Tadawul symbol: Argaam company id} for the Main market (data-market 3), from the search list on any
+    argaam.com page. Nomu rows (market 14) are left out."""
+    # some symbols carry a trailing space, e.g. "4082 "
+    return {s: int(c) for c, s in re.findall(
+        r'data-company="(\d+)" data-market="3">\s*<span[^>]*?relf-Stocksymbol="(\w+)\s*"', html)}
+
+
+def argaam_ids():
+    """The saved argaam_list(). A built wheel leaves argaam_ids.json out; argaam_id() then looks every symbol up live."""
+    try:
+        return json.loads(ARGAAM_IDS.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def argaam_id(symbol):
+    """Argaam company id of a Main market symbol, or None if Argaam doesn't list it (news then comes from Mubasher
+    only). A symbol missing from argaam_ids.json, such as a new IPO, is looked up on the live page."""
+    return argaam_ids().get(symbol) or argaam_list(fetch(ARGAAM)).get(symbol)
 
 
 mcp = MCPServer("tasi", instructions=(

@@ -6,7 +6,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 import tasi_mcp
-from tasi_mcp import clean, filings, profits, tables, ttm_profit, xbrl_quarter_profits, xbrl_sections
+from tasi_mcp import argaam_list, clean, filings, profits, tables, ttm_profit, xbrl_quarter_profits, xbrl_sections
 
 FILINGS = """<table>
 <tr><th><select><option>2025</option></select></th><th>2025</th><th>2024</th></tr>
@@ -356,3 +356,25 @@ def test_market_sections(monkeypatch):
     assert tasi_mcp.get_market() == {"breadth": reply["marketBean"]} | {k: v for k, v in reply.items() if k != "marketBean"}
     with pytest.raises(ValueError, match="valid: indices"):
         tasi_mcp.get_market(["etf"])
+
+
+ARGAAM_LIST = """<li class="Labelssearch_main" data-company="3509" data-market="3">
+    <span class="searchingElements"id="3509_companylist" relf-Stocksymbol="2222" relf-fav="False" value="3509">
+<li class="Labelssearch_main" data-company="4696" data-market="3">
+    <span class="searchingElements"id="4696_companylist" relf-Stocksymbol="4082 " relf-fav="False" value="4696">
+<li class="Labelssearch_main" data-company="4433" data-market="14">
+    <span class="searchingElements"id="4433_companylist" relf-Stocksymbol="9564" relf-fav="False" value="4433">"""
+
+
+def test_argaam_list_keeps_main_market_only():
+    assert argaam_list(ARGAAM_LIST) == {"2222": 3509, "4082": 4696}
+
+
+def test_argaam_id_reads_map_then_live_page(monkeypatch):
+    fake(monkeypatch, ARGAAM_LIST)
+    monkeypatch.setattr(tasi_mcp, "argaam_ids", lambda: {"1120": 43})
+    assert tasi_mcp.argaam_id("4082") == 4696  # a new IPO missing from the map
+    assert tasi_mcp.argaam_id("9564") is None  # Argaam lists it under Nomu only
+    assert tasi_mcp.argaam_id("0000") is None
+    monkeypatch.setattr(tasi_mcp, "fetch", lambda url: 1 / 0)
+    assert tasi_mcp.argaam_id("1120") == 43  # a hit never reads the live page
