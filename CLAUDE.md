@@ -22,7 +22,7 @@ Everything is in `tasi_mcp.py` (MCP Python SDK v2, `MCPServer` + `@mcp.tool()`).
 - `@cached(ttl)`: in-memory cache keyed by function name and args. Tests reset `_cache`.
 - Tools: thin functions that call the layers above, validate input (`check(symbol)`, `day()` for ISO dates) and parse HTML with BeautifulSoup / `clean()` / `tables()`.
 
-Many replies are JSON sent as `text/html`, so parse the body yourself. `ENDPOINTS.md` maps every known endpoint (path, params, referer page, which tool uses it, and what failed). Read it before adding a tool or hunting for a new endpoint.
+Many replies are JSON sent as `text/html`, so parse the body yourself. `ENDPOINTS.md` maps every known saudiexchange.sa endpoint (path, params, referer page, which tool uses it, and what failed). News endpoints have one file per site: `news_endpoints/argaam.md` and `news_endpoints/mubasher.md`. Read the right file before adding a tool or hunting for a new endpoint.
 
 ## Data-accuracy rules
 
