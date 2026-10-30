@@ -5,39 +5,29 @@ description: Find a saudiexchange.sa data endpoint by watching the live site in 
 
 # Find an endpoint on saudiexchange.sa
 
-Needs the `chrome-devtools` MCP server (`claude mcp list` should show it). If it's missing: `claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --no-usage-statistics --no-performance-crux`, then restart.
+Goal: find where the site gets a piece of data, call it from Python with the helpers in `tasi_mcp.py`, and record it in `ENDPOINTS.md`.
 
-## 1. Check what's known
+Start with `ENDPOINTS.md`. If the data is already mapped, go straight to the replay. Its "How to call" section has the rules every request needs.
 
-Read `ENDPOINTS.md` first. If the data is already mapped, skip the browser and go to step 3.
+## Finding it
 
-## 2. Watch the site
+Explore the live site with the `chrome-devtools` MCP first: scroll, open tabs and "load more", and watch the XHR/fetch requests. Raw HTML misses what loads later. Only one agent drives Chrome at a time. If the MCP is missing: `claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --no-usage-statistics --no-performance-crux`, then restart.
 
-- Never pass `--headless`. Akamai returns "Access Denied" (403) to headless Chrome. A visible window works.
-- `list_pages` first. Every other tool needs its `pageId`.
-- `navigate_page` to the page that shows the data. Add `?locale=en` to every page except the company profile (see `PROFILE` in `tasi_mcp.py`).
-- If the data only shows up after an action (tab, date picker, "load more"), `take_snapshot`, then `click` the element.
-- `list_network_requests` with `resourceTypes: ["xhr", "fetch"]` and a big `pageSize` (it is paginated; requests fired after a click land on later pages). Skip analytics (google-analytics, go-mpulse) and `chat.tadawul.com.sa`.
-- Quicker for GETs: `evaluate_script` with `() => performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('NJ'))` gives every full URL and query in one call.
-- `get_network_request` with the `reqid` gives the method, the POST body, headers and the response. It prints session cookies, so use it only for POST bodies. Its `responseFilePath` can't write outside the repo; save under `.claude/tmp_*` and delete it after.
-- No XHR? The table may be in the page HTML. Grep `t.page(url)[0]` for the value, and for `NJ\w+=` to list every endpoint the page's JS knows, including ones no click fired.
-- Allowed param values are usually the page's `<select>` options. Read them from `t.page(url)[0]` with BeautifulSoup.
-- Big pages: `take_snapshot` with `filePath` and grep it. Some tabs are `<a href="#">`; click them with `evaluate_script` if `click` misses.
-- `p0/IZ7_...=NJname=/` paths are relative to the page's `<base href>`. Read it with `evaluate_script`: `() => document.baseURI`.
-- Page console logs print a JWT. Known endpoints don't need it, so don't copy it into code or docs.
+What you can't guess about this site:
+- Akamai blocks headless Chrome. Use a visible window.
+- Add `locale=en` to every page URL, the company profile included.
+- Pages name their portlet endpoints (`p0/IZ7_...=NJname=/`) in their own HTML, including ones no click fires.
+- Allowed parameter values are usually the page's `<select>` options.
+- The page logs a JWT and the browser holds session cookies. No endpoint needs them, so keep them out of code and docs.
 
-## 3. Replay it without a browser
+## Done when
 
-The endpoint is only usable if the existing helpers can call it:
+- It replays without a browser through `t.xhr(base + path, page_url, ...)`, `t.servlet(name)` or `t.fetch(url)`. A 403 almost always means a wrong Referer or missing XHR headers, not a dead endpoint.
+- `ENDPOINTS.md` has a row that follows the rules at the top of that file. Dead ends go under "Failed / not useful".
+- If you added a tool, it follows `CLAUDE.md` and `uv run pytest` passes.
 
-```sh
-uv run python -c "import tasi_mcp as t; _, base = t.page(PAGE_URL); print(t.xhr(base + PATH, PAGE_URL).text[:2000])"
-```
+## Known issues
 
-POST: `t.xhr(base + PATH, PAGE_URL, method="POST", data={...})`. Use `t.servlet(name)` for `/tadawul.eportal.theme.helper/*`. A 403 almost always means a wrong `Referer` or missing XHR headers, not a dead endpoint.
+One line per real failure: what broke and the fix that worked, or "unresolved" plus what was tried. Add a line only after the user approves it. If a line above caused the failure, fix that line instead. Delete a line once a step, test or code covers it.
 
-## 4. Record it
-
-- Add a row to `ENDPOINTS.md`: **Not used** (under its page) until a tool calls it, then move it to **Used**. Give path, method + params, what it returns, response size, and what a correct reply looks like (no verified dates; they go stale). Dead ends go under **Failed / not useful**.
-- If you're adding a tool, follow the existing layers in `tasi_mcp.py` (`page`/`xhr`/`servlet`, `@cached`, `check()`/`day()` for input) and add an offline test in `test_tasi_mcp.py` using `fake(monkeypatch, reply)` with a trimmed real response as the fixture.
-- `uv run pytest`.
+- Chrome says "The browser is already running for .../chrome-profile": another Claude session has it open. Don't kill it. Work from the page HTML (`t.page(url)`, its `<select>` options and JS) or wait until it's free.
