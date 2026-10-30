@@ -16,7 +16,7 @@ PORTAL = ROOT + "/wps/portal/saudiexchange"
 HOME = PORTAL + "/home"
 # The plain ?companySymbol= URL renders an empty template; only this encoded one works.
 PROFILE = (PORTAL + "/hidden/company-profile-main/!ut/p/z1/04_Sj9CPykssy0xPLMnMz0vMAfIjo8ziTR3NDIw8LAz83d2MXA0C3SydAl1c3Q0"
-           "NvE30I4EKzBEKDMKcTQzMDPxN3H19LAzdTU31w8syU8v1wwkpK8hOMgUA-oskdg!!/?companySymbol={}")
+           "NvE30I4EKzBEKDMKcTQzMDPxN3H19LAzdTU31w8syU8v1wwkpK8hOMgUA-oskdg!!/?companySymbol={}&locale=en")
 HISTORY = PORTAL + "/newsandreports/reports-publications/historical-reports?locale=en"
 ANNOUNCE = PORTAL + "/newsandreports/issuer-news/issuer-announcements?locale=en"
 WATCH = PORTAL + "/ourmarkets/main-market-watch?locale=en"
