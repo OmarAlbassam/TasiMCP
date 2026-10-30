@@ -1,6 +1,6 @@
 # saudiexchange.sa data endpoints
 
-Every endpoint found so far, split into **used** (a tool calls it), **not used** (works, no tool yet) and **failed**. Each row must carry enough to replay it (page, path, params) and what a correct reply looks like, so a re-check shows whether it holds. No "verified" dates. Nothing needs a login or a JWT.
+Every endpoint found so far, split into **used** (a tool calls it), **not used** (works, no tool yet) and **failed**. This file must stay **stateless**: no "verified" dates or "works as of" notes, because they go stale. Every claim must be **challengeable**: each row carries enough to replay it (page, path, params) and what a correct reply looks like, so anyone can re-run it and see whether it still holds. Nothing needs a login or a JWT.
 
 When a tool starts or stops calling an endpoint, move its row between sections.
 
