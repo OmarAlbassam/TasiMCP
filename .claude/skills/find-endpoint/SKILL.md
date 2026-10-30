@@ -11,7 +11,7 @@ Start with `ENDPOINTS.md`. If the data is already mapped, go straight to the rep
 
 ## Finding it
 
-Explore the live site with the `chrome-devtools` MCP first: scroll, open tabs and "load more", and watch the XHR/fetch requests. Raw HTML misses what loads later. Only one agent drives Chrome at a time. If the MCP is missing: `claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --no-usage-statistics --no-performance-crux`, then restart.
+The site is built for people, not scripts, so assume the data hides behind something a person would do: lazy loads on scroll, "load more", downloads, sub-tabs, sub-pages, date pickers. Explore the live site with the `chrome-devtools` MCP first, do those things, and watch the XHR/fetch requests each one fires. Raw HTML misses what loads later. Only one agent drives Chrome at a time. If the MCP is missing: `claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --no-usage-statistics --no-performance-crux`, then restart.
 
 What you can't guess about this site:
 - Akamai blocks headless Chrome. Use a visible window.
