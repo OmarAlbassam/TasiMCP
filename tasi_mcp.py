@@ -284,7 +284,8 @@ def get_quotes(symbols: list[str] | None = None) -> list[dict]:
     Main market rows also have open, high, low, previous close, best bid/ask with sizes, 52-week high/low
     and sector; for Nomu these stay empty. Omit symbols for all ~400. Every row gets market_open: false
     when the site says the market is closed. A stock with no trade yet today has a price of 0 on the site:
-    those rows get lastTradePrice = previousClosePrice and price_is_previous_close: true."""
+    those rows get lastTradePrice = previousClosePrice and price_is_previous_close: true, or lastTradePrice: null
+    when the site gives no previous close (Nomu, or market watch down)."""
     try:
         watch = market_watch()
     except Exception:  # extras only; a market-watch outage must not take down quotes and get_valuation
@@ -301,6 +302,8 @@ def get_quotes(symbols: list[str] | None = None) -> list[dict]:
             r["market_open"] = False
         if not r.get("lastTradePrice", 1) and r.get("previousClosePrice"):  # 0 means no trade yet today
             r["lastTradePrice"], r["price_is_previous_close"] = r["previousClosePrice"], True
+        elif not r.get("lastTradePrice", 1):  # a 0 is not a price; null beats a fake one
+            r["lastTradePrice"] = None
     return rows
 
 
