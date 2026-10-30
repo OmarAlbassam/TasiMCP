@@ -124,8 +124,12 @@ def test_xbrl_finds_filing_by_year_and_period(monkeypatch):
             tasi_mcp.get_xbrl("1120", **bad)
 
 
+NO_ACTIONS = {"upComingCorporateBeans": [], "pastCorporateBeans": []}
+
+
 def test_valuation_adds_daily_report_rows(monkeypatch):
     fake(monkeypatch, "")
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
     summary = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in SUMMARY)
     monkeypatch.setattr(tasi_mcp, "profile_soup", lambda s: BeautifulSoup(
         f'<div class="fundInfo"><b>Total Issued Shares</b><b>4,000</b></div>'
@@ -152,10 +156,27 @@ def test_valuation_sums_dividends_up_to_today(monkeypatch):
     today = date.today()
     rows = [{"dueDate": (today - timedelta(d)).isoformat(), "amount": a} for d, a in ((10, 0.5), (200, 0.25), (0, 0.25), (-5, 9.0), (50, 0))]
     monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: rows)
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
     v = tasi_mcp.get_valuation("1120")
     assert (v["dividends_ttm_sar"], v["dividend_yield_pct"]) == (1.0, 10.0)  # the future row is left out
     assert v["payout_ratio_pct"] == round(4000 / v["fy_net_profit_sar"] * 100, 1)
-    assert v["payout_above_100"] == (v["payout_ratio_pct"] > 100)
+    assert v["payout_above_100"] == (v["payout_ratio_pct"] > 100) and v["dividend_note"] is None
+    # a bonus issue inside the window blanks the numbers; one 400 days ago does not; a failed lookup blanks them too
+    def acts(days):
+        due = (today - timedelta(days)).strftime("%d/%m/%Y")
+        return {"upComingCorporateBeans": [], "pastCorporateBeans": [
+            {"issueTypeDesc": "Bonus Shares", "dueDate": due}, {"issueTypeDesc": "Rights Issue", "dueDate": due}]}
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: acts(30))
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"], v["payout_above_100"]) == (None,) * 4
+    assert "Bonus Shares" in v["dividend_note"]
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: acts(400))
+    assert tasi_mcp.get_valuation("1120")["dividends_ttm_sar"] == 1.0
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: 1 / 0)
+    v = tasi_mcp.get_valuation("1120")
+    assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"], v["payout_above_100"]) == (None,) * 4
+    assert v["dividend_note"]
+    monkeypatch.setattr(tasi_mcp, "get_corporate_actions", lambda s: NO_ACTIONS)
     monkeypatch.setattr(tasi_mcp, "get_dividends", lambda s, start, end: 1 / 0)
     v = tasi_mcp.get_valuation("1120")
     assert (v["dividends_ttm_sar"], v["dividend_yield_pct"], v["payout_ratio_pct"]) == (None, None, None)

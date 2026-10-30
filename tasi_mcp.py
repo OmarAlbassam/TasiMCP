@@ -3,7 +3,7 @@ import functools
 import re
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 from urllib.parse import urljoin
 
@@ -421,8 +421,9 @@ def get_valuation(symbol: str) -> dict:
     EPS, book value, net income and equity for the stock and its sector (money in SAR millions); None for Nomu.
     dividends_ttm_sar: cash dividends per share whose eligibility date (dueDate, what get_dividends returns) fell in
     the last 365 days, specials included. dividend_yield_pct: that / price. payout_ratio_pct: that / eps_fy;
-    payout_above_100 flags it, which usually means a one-off special. All three are None if the dividend lookup fails (payout also if eps_fy <= 0).
-    Warning: after a bonus issue or split in the window, old dividends are per old share and the yield is overstated."""
+    payout_above_100 flags it, which usually means a one-off special. All four are None (payout also if eps_fy <= 0)
+    if the dividend lookup fails, or if a bonus issue, split or capital reduction has a dueDate in the window: older
+    dividends are then per old share and we don't adjust. dividend_note says why; otherwise it is None."""
     check(symbol)
     try:
         daily = screen_valuations()
@@ -438,11 +439,26 @@ def get_valuation(symbol: str) -> dict:
     quote = get_quotes([symbol])
     price = quote[0]["lastTradePrice"] if quote else None
     today = date.today()
-    try:  # shortcut: no bonus issue/split adjustment (get_corporate_actions), upgrade if yields after bonus issues matter
-        divs = round(sum(d["amount"] for d in get_dividends(symbol, (today - timedelta(365)).isoformat(), today.isoformat())
-                         if d["dueDate"] <= today.isoformat()), 4)
-    except Exception:  # extras only, like the daily report
+    start = today - timedelta(365)
+    divs = note = None
+    try:
+        # Bonus issues, splits and capital reductions change what one share is; rights issues, acquisitions, mergers
+        # and debt conversions add shares without changing old ones, so they are ignored.
+        acts = get_corporate_actions(symbol)
+        hit = [(datetime.strptime(a["dueDate"], "%d/%m/%Y").date(), a["issueTypeDesc"])
+               for a in acts["upComingCorporateBeans"] + acts["pastCorporateBeans"]
+               if re.search(r"bonus|split|reduc|consolidat", a["issueTypeDesc"], re.I)]
+        hit = [h for h in hit if start <= h[0] <= today]
+        if hit:
+            when, kind = max(hit)
+            note = (f"{kind} on {when} inside the 12-month window; dividends before it are per old share, so TTM, "
+                    "yield and payout are left out. See get_dividends and get_corporate_actions.")
+        else:
+            divs = round(sum(d["amount"] for d in get_dividends(symbol, start.isoformat(), today.isoformat())
+                             if d["dueDate"] <= today.isoformat()), 4)
+    except Exception:  # extras only, like the daily report; if we can't tell, leave the dividend fields out
         divs = None
+        note = "Dividend lookup failed, so TTM, yield and payout are left out. Try get_dividends and get_corporate_actions."
     site = next((td.select_one(".price") for td in soup.select("#peercompDT td") if "P/E" in td.get_text()), None)
     site = site.get_text(strip=True).replace(",", "") if site else ""
     payout = round(divs * shares / annual[fy_end] * 100, 1) if divs is not None and annual[fy_end] > 0 else None
@@ -454,7 +470,8 @@ def get_valuation(symbol: str) -> dict:
             "pe_fy": round(price * shares / annual[fy_end], 1) if price and annual[fy_end] > 0 else None,
             "dividends_ttm_sar": divs,
             "dividend_yield_pct": round(divs / price * 100, 2) if divs is not None and price else None,
-            "payout_ratio_pct": payout, "payout_above_100": payout is not None and payout > 100,
+            "payout_ratio_pct": payout, "payout_above_100": payout > 100 if payout is not None else None,
+            "dividend_note": note,
             "daily_report": {"as_of": daily["as_of"], "stock": stock, "sector": sector} if stock else None,
             "note": "Profit is before Tier 1 sukuk payouts, so bank EPS can read a few % above reported."}
 
