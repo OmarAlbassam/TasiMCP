@@ -5,7 +5,7 @@ description: Find a saudiexchange.sa data endpoint by watching the live site in 
 
 # Find an endpoint on saudiexchange.sa
 
-Goal: find where the site gets a piece of data, call it from Python with the helpers in `tasi_mcp.py`, and record it in `docs/ENDPOINTS.md`.
+Goal: find where the site gets a piece of data, call it from Python with the helpers in `src/saudiexchange.py`, and record it in `docs/ENDPOINTS.md`.
 
 Start with `docs/ENDPOINTS.md`. If the data is already mapped, go straight to the replay. Its "How to call" section has the rules every request needs.
 
@@ -22,7 +22,7 @@ What you can't guess about this site:
 
 ## Done when
 
-- It replays without a browser through `t.xhr(base + path, page_url, ...)`, `t.servlet(name)` or `t.fetch(url)`. A 403 almost always means a wrong Referer or missing XHR headers, not a dead endpoint.
+- It replays without a browser through `saudiexchange.xhr(base + path, page_url, ...)`, `saudiexchange.servlet(name)` or `core.fetch(url)`. A 403 almost always means a wrong Referer or missing XHR headers, not a dead endpoint.
 - `docs/ENDPOINTS.md` has a row that follows the rules at the top of that file. Dead ends go under "Failed / not useful".
 - If you added a tool, it follows `CLAUDE.md` and `uv run pytest` passes.
 
@@ -30,4 +30,4 @@ What you can't guess about this site:
 
 One line per real failure: what broke and the fix that worked, or "unresolved" plus what was tried. Add a line only after the user approves it. If a line above caused the failure, fix that line instead. Delete a line once a step, test or code covers it.
 
-- Chrome says "The browser is already running for .../chrome-profile": another Claude session has it open. Don't kill it. Work from the page HTML (`t.page(url)`, its `<select>` options and JS) or wait until it's free.
+- Chrome says "The browser is already running for .../chrome-profile": another Claude session has it open. Don't kill it. Work from the page HTML (`saudiexchange.page(url)`, its `<select>` options and JS) or wait until it's free.

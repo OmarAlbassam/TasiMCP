@@ -6,7 +6,7 @@ When a tool starts or stops calling an endpoint, move its row between sections.
 
 ## How to call
 
-- `t.fetch(url)`: the shared `curl_cffi` session with `impersonate="chrome"`. Every reply below is HTML or RSS, so parse the body yourself.
+- `core.fetch(url)`: the shared `curl_cffi` session with `impersonate="chrome"`. Every reply below is HTML or RSS, so parse the body yourself.
 - robots.txt has `Crawl-delay: 5` and `Disallow: /api/`. Keep 5 s between requests.
 - Article `publishedAt` is Riyadh time marked `Z`. The RSS `pubDate` of the same article is real GMT, 3 h earlier.
 

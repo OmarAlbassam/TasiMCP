@@ -1,17 +1,11 @@
-"""Saudi Exchange (Tadawul) MCP server. Scrapes saudiexchange.sa on demand, over stdio."""
-import functools
-import json
 import re
-import threading
-import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
-from curl_cffi import requests
-from mcp.server import MCPServer
+
+from .core import cached, day, fetch, mcp, request
 
 ROOT = "https://www.saudiexchange.sa"
 PORTAL = ROOT + "/wps/portal/saudiexchange"
@@ -43,37 +37,10 @@ LOSERS = "p0/IZ7_5A602H80OOMQC0604RU6VD1021=CZ6_5A602H80OGSTA0QFSTBN9F10G0=NJget
 DIVIDENDS = "p0/IZ7_5A602H80OOMQC0604RU6VD10J3=CZ6_5A602H80O8HH70QFKI8IRJ00P3=NJgetDividendsDetails=/"
 LISTINGS = "p0/IZ7_5A602H80OOMQC0604RU6VD10F0=CZ6_5A602H80OO5JC0QFMU3NNK3852=NJgetALLListingDataId=/"
 ISSUERS_DATA = "p0/IZ7_5A602H80OOMQC0604RU6VD10D2=CZ6_5A602H80O8DDC0QFK8HJ0O20K4=NJ{}=/"
-# Every argaam.com page carries the full company search list; the RSS index is the smallest with no company slug.
-ARGAAM = "https://www.argaam.com/en/rss"
-ARGAAM_IDS = Path(__file__).with_name("argaam_ids.json")  # rewrite with update_argaam_ids.py
 
 # Akamai blocks non-browser TLS fingerprints, and the JSON endpoints 403 without XHR-style headers.
-S = requests.Session(impersonate="chrome")
 XHR = {"Accept": "application/json, text/javascript, */*; q=0.01", "X-Requested-With": "XMLHttpRequest",
        "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}
-LOCK = threading.Lock()  # one shared session; tool calls may run in worker threads
-_cache = {}
-
-
-def cached(ttl):
-    def deco(fn):
-        @functools.wraps(fn)
-        def wrap(*args):
-            hit = _cache.get((fn.__name__, args))
-            if hit and time.time() - hit[0] < ttl:
-                return hit[1]
-            value = fn(*args)
-            _cache[(fn.__name__, args)] = (time.time(), value)
-            return value
-        return wrap
-    return deco
-
-
-def request(method, url, **kw):
-    with LOCK:
-        r = S.request(method, url, timeout=40, **kw)
-    r.raise_for_status()
-    return r
 
 
 @cached(600)
@@ -90,11 +57,6 @@ def xhr(url, referer, method="GET", **kw):
     return request(method, url, headers={**XHR, "Referer": referer}, **kw)
 
 
-@cached(3600)
-def fetch(url):
-    return request("GET", url).text
-
-
 @cached(60)
 def servlet(name):
     return xhr(f"{ROOT}/tadawul.eportal.theme.helper/{name}", HOME).json()
@@ -108,9 +70,6 @@ def check(symbol):
     if symbol not in {c["symbol"] for c in companies()}:
         raise ValueError(f"Unknown symbol {symbol!r}; use list_companies to find it")
 
-
-def day(s, default):
-    return date.fromisoformat(s) if s else default
 
 
 def clean(s):
@@ -250,35 +209,6 @@ def pick_sector(sector, names):
     if not found:
         raise ValueError(f"Unknown sector {sector!r}; use one of {sorted(set(names))}")
     return found
-
-
-def argaam_list(html):
-    """{Tadawul symbol: Argaam company id} for the Main market (data-market 3), from the search list on any
-    argaam.com page. Nomu rows (market 14) are left out."""
-    # some symbols carry a trailing space, e.g. "4082 "
-    return {s: int(c) for c, s in re.findall(
-        r'data-company="(\d+)" data-market="3">\s*<span[^>]*?relf-Stocksymbol="(\w+)\s*"', html)}
-
-
-def argaam_ids():
-    """The saved argaam_list(). A built wheel leaves argaam_ids.json out; argaam_id() then looks every symbol up live."""
-    try:
-        return json.loads(ARGAAM_IDS.read_text())
-    except FileNotFoundError:
-        return {}
-
-
-def argaam_id(symbol):
-    """Argaam company id of a Main market symbol, or None if Argaam doesn't list it (news then comes from Mubasher
-    only). A symbol missing from argaam_ids.json, such as a new IPO, is looked up on the live page."""
-    return argaam_ids().get(symbol) or argaam_list(fetch(ARGAAM)).get(symbol)
-
-
-mcp = MCPServer("tasi", instructions=(
-    "Saudi Exchange (Tadawul) data scraped live from saudiexchange.sa. Symbols are 4-digit codes, e.g. 2222 "
-    "(Saudi Aramco), 4002 (Mouwasat). Financial table figures are SAR thousands unless the table says otherwise. "
-    "For P/E and market cap use get_valuation, not price / the site's EPS, which is wrong after bonus issues. "
-    "For debt, loans and finance costs read the XBRL filings with get_xbrl."))
 
 
 @mcp.tool()
@@ -768,11 +698,3 @@ def get_block_trades(symbol: str = "", start: str = "", end: str = "") -> list[d
                     fromDate=day(start, date.today() - timedelta(30)).strftime("%d-%m-%Y"),
                     toDate=day(end, date.today()).strftime("%d-%m-%Y"))
     return [r for r in found if r["symbol"]]  # the last row is a blank-symbol total
-
-
-def main():
-    mcp.run()
-
-
-if __name__ == "__main__":
-    main()
