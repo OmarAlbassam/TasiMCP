@@ -6,7 +6,7 @@ When a tool starts or stops calling an endpoint, move its row between sections.
 
 ## How to call
 
-- `t.fetch(url)`: the shared `curl_cffi` session with `impersonate="chrome"`. Every reply below is HTML or RSS, so parse the body yourself.
+- `core.fetch(url)`: the shared `curl_cffi` session with `impersonate="chrome"`. Every reply below is HTML or RSS, so parse the body yourself.
 - Lists give dates only: `dd/mm/yyyy` in English, `yyyy/mm/dd` in Arabic.
 
 Shorthands used in the tables:

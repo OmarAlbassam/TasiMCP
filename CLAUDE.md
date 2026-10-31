@@ -6,14 +6,21 @@ Local stdio MCP server for the Saudi Exchange (Tadawul). It scrapes saudiexchang
 
 ## Commands
 
-- Run the server: `uv run tasi-mcp` (entry point `tasi_mcp:main`).
-- All tests: `uv run pytest`. One test: `uv run pytest test_tasi_mcp.py::test_options_strips_html_and_checks_date`.
+- Run the server: `uv run tasi-mcp` (entry point `src:main`).
+- All tests: `uv run pytest`. One test: `uv run pytest tests/test_tasi_mcp.py::test_options_strips_html_and_checks_date`.
 - Register with Claude Code: `claude mcp add tasi -- uv run --directory /Users/omar/workspace/TasiMCP tasi-mcp`. Tools added in a running session only load after `/mcp` reconnect or a restart.
-- Quick live check of one tool without MCP: `uv run python -c "import tasi_mcp; print(tasi_mcp.get_quotes(['1120']))"`.
+- Quick live check of one tool without MCP: `uv run python -c "import src; print(src.saudiexchange.get_quotes(['1120']))"`.
 
 ## Architecture
 
-Everything is in `tasi_mcp.py` (MCP Python SDK v2, `MCPServer` + `@mcp.tool()`). Layers, bottom up:
+A package, `src/` (MCP Python SDK v2, `MCPServer` + `@mcp.tool()`). Imports go one way: `news` and `saudiexchange` import from `core`; `core` imports neither.
+
+- `__init__.py`: imports the three submodules so every `@mcp.tool()` registers, and defines `main()` (the `tasi-mcp` entry point).
+- `core.py`: `mcp`, the shared session `S` and `LOCK`, `request()`, `fetch()`, `cached`/`_cache`, `day()`.
+- `saudiexchange.py`: everything for saudiexchange.sa, including all the tools.
+- `news.py`: the Argaam company-id map (`argaam_id`). `argaam_ids.json` sits beside it.
+
+Layers, bottom up:
 
 - `request()`: one shared `curl_cffi` session with `impersonate="chrome"`, behind a lock. Akamai blocks other TLS fingerprints.
 - `xhr(url, referer)`: adds the `XHR` headers and a `Referer`. JSON endpoints return 403 without both.
@@ -32,4 +39,4 @@ Many replies are JSON sent as `text/html`, so parse the body yourself. `docs/END
 
 ## Tests
 
-`test_tasi_mcp.py` is offline. Pure parsers get HTML/JSON fixtures directly. Tools use `fake(monkeypatch, reply)`, which stubs `xhr`, `page`, `fetch`, `check`, `companies` and the cache so every request returns `reply`.
+`tests/test_tasi_mcp.py` is offline. Pure parsers get HTML/JSON fixtures directly. Tools use `fake(monkeypatch, reply)`, which stubs `xhr`, `page`, `fetch`, `check`, `companies` and the cache so every request returns `reply`. Patch a name on the module that looks it up: `_cache` on `core` (the `cached` wrapper reads core's global), the rest on `saudiexchange`, and Argaam tests on `news`. `from .core import fetch` makes a separate `fetch` binding in each module, so patching one leaves the other live.

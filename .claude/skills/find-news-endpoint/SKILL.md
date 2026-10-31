@@ -5,7 +5,7 @@ description: Find an argaam.com or mubasher.info news endpoint by watching the l
 
 # Find a news endpoint on Argaam or Mubasher
 
-Goal: find where the site gets a piece of news or data, call it from Python with the helpers in `tasi_mcp.py`, and record it in that site's file: `docs/news_endpoints/argaam.md` or `docs/news_endpoints/mubasher.md`.
+Goal: find where the site gets a piece of news or data, call it from Python with the helpers in `src/core.py` and `src/news.py`, and record it in that site's file: `docs/news_endpoints/argaam.md` or `docs/news_endpoints/mubasher.md`.
 
 Start with that file. If the data is already mapped, go straight to the replay. Its "How to call" section has the rules every request needs.
 
@@ -26,7 +26,7 @@ What you can't guess about Mubasher:
 
 ## Done when
 
-- It replays without a browser through `t.fetch(url)`.
+- It replays without a browser through `core.fetch(url)`.
 - The site's robots.txt and terms allow it.
 - The site's file has a row that follows the rules at the top of that file. Dead ends go under "Failed / not useful".
 - If you added a tool, it follows `CLAUDE.md` and `uv run pytest` passes.
@@ -35,4 +35,4 @@ What you can't guess about Mubasher:
 
 One line per real failure: what broke and the fix that worked, or "unresolved" plus what was tried. Add a line only after the user approves it. If a line above caused the failure, fix that line instead. Delete a line once a step, test or code covers it.
 
-- Chrome says "The browser is already running for .../chrome-profile": another Claude session has it open. Don't kill it. Work from the page HTML (`t.fetch(url)`) or wait until it's free.
+- Chrome says "The browser is already running for .../chrome-profile": another Claude session has it open. Don't kill it. Work from the page HTML (`core.fetch(url)`) or wait until it's free.

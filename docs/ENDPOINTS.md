@@ -6,16 +6,16 @@ When a tool starts or stops calling an endpoint, move its row between sections.
 
 ## How to call
 
-See `page()` / `xhr()` in `tasi_mcp.py`.
+See `page()` / `xhr()` in `src/saudiexchange.py`.
 - `curl_cffi` `Session(impersonate="chrome")`. Akamai blocks other TLS fingerprints.
-- Send the `XHR` headers from `tasi_mcp.py` plus `Referer` = the page URL. Without them you get 403 / "Access Denied".
+- Send the `XHR` headers from `src/saudiexchange.py` plus `Referer` = the page URL. Without them you get 403 / "Access Denied".
 - `p0/...` paths are relative to the `<base href>` of their page. GET the page first, then call `base + path`.
 - Many JSON replies come back as `text/html`, so parse the body yourself. POST bodies are form-urlencoded.
 - `/tadawul...` and `/Resources...` paths are relative to `https://www.saudiexchange.sa`, so no base href is needed. Any page works as referer.
 
 Shorthands used in the tables:
 - `P` = `https://www.saudiexchange.sa/wps/portal/saudiexchange`. Add `locale=en` to every page, the profile included.
-- `PROFILE` = the company profile URL in `tasi_mcp.py`. The plain `?companySymbol=` URL renders an empty page.
+- `PROFILE` = the company profile URL in `src/saudiexchange.py`. The plain `?companySymbol=` URL renders an empty page.
 - Profile prefixes: `A` = `p0/IZ7_5A602H80O0VC4060O4GML81G57=CZ6_5A602H80OGF2E0QF9BQDEG10K4=`, `B` = `p0/IZ7_5A602H80O0VC4060O4GML81GV7=CZ6_5A602H80OGF2E0QF9BQDEG10K4=`, `C` = `p0/IZ7_5A602H80O0VC4060O4GML81G55=CZ6_5A602H80OGF2E0QF9BQDEG10K4=`.
 - Issuers-trading prefix: `I` = `p0/IZ7_5A602H80OOMQC0604RU6VD10D2=CZ6_5A602H80O8DDC0QFK8HJ0O20K4=` on `P/ourmarkets/main-market-watch/issuers-trading-information`.
 
